@@ -44,6 +44,11 @@ Price providers run as **stubs** returning deterministic estimates, so the app
 works end-to-end with no API keys. Each stub is marked `# STUB` with a note on
 what the real implementation needs.
 
+**Live flight prices:** set `DUFFEL_API_KEY` in `backend/.env` to swap the
+flight stub for real Duffel fares (test mode is free — get a key at
+https://duffel.com, dashboard → test mode). Everything else stays on stubs
+until its provider lands.
+
 **Roadmap:** real providers (Duffel for flights, OSRM for driving) →
 Postgres/Redis wiring → React Native iOS app on the same API → App Store.
 
