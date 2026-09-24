@@ -3,8 +3,6 @@ without network access (ARCHITECTURE.md decision 3 paying off)."""
 
 from datetime import date
 
-import pytest
-
 from app.core.orchestrator import plan_trip
 from app.models import TravelMode, TripRequest
 from app.providers.stubs import (
@@ -17,25 +15,25 @@ from app.providers.stubs import (
 
 
 def _req(**overrides) -> TripRequest:
-    base = dict(
-        origin="Auburn, WA 98092",
-        destination_city="Los Angeles",
-        depart_date=date(2026, 10, 16),
-        return_date=date(2026, 10, 19),
-        mode=TravelMode.EITHER,
-    )
+    base = {
+        "origin": "Auburn, WA 98092",
+        "destination_city": "Los Angeles",
+        "depart_date": date(2026, 10, 16),
+        "return_date": date(2026, 10, 19),
+        "mode": TravelMode.EITHER,
+    }
     base.update(overrides)
     return TripRequest(**base)
 
 
 def _providers():
-    return dict(
-        flights=StubFlightProvider(),
-        driving=StubDrivingProvider(),
-        ground=HeuristicGroundProvider(),
-        rental=StubRentalCarProvider(),
-        fuel=StubFuelProvider(),
-    )
+    return {
+        "flights": StubFlightProvider(),
+        "driving": StubDrivingProvider(),
+        "ground": HeuristicGroundProvider(),
+        "rental": StubRentalCarProvider(),
+        "fuel": StubFuelProvider(),
+    }
 
 
 async def test_either_mode_returns_fly_and_drive_options():
