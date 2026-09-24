@@ -93,6 +93,25 @@ API first means the second client costs a fraction of the first.
 **Why:** the same container runs in dev, CI, and prod with different env.
 API keys (Duffel etc.) slot in without code changes.
 
+## 10. Duffel for live flight prices
+
+**Decision:** the first real provider is Duffel (offer-requests API), chosen
+over scraping or GDS-direct integration.
+
+**Why:** one REST API returns bookable fares across 300+ airlines — no
+per-airline deals, no screen-scraping. Its free **test mode** returns
+realistic sandbox fares, so the integration is verifiable without spending a
+dollar or booking anything real. The adapter maps Duffel offers to our
+`FlightQuote` interface; time-window preferences are pushed server-side via
+Duffel's `departure_time` filter, while the red-eye preference stays
+client-side (Duffel has no such flag). The swap happens in exactly one place
+(`api/trips.py::_providers`): set `DUFFEL_API_KEY` and flights go live, with
+the orchestrator untouched — the payoff of decision 3.
+
+**Tradeoff:** Duffel is a middleman — fares can differ slightly from what an
+airline sells directly, and offer requests cost per call in live mode, which
+is why the Redis fare cache (Phase 1b) matters before going live.
+
 ## File tour
 
 | Path | What it is | Why it exists |
@@ -103,7 +122,7 @@ API keys (Duffel etc.) slot in without code changes.
 | `backend/app/api/trips.py` | `POST /trips`, `GET /trips/{id}` | Job-model endpoints (decision 5) |
 | `backend/app/core/orchestrator.py` | Builds the option tree, fans out, ranks | The product's brain — decision 2 and 6 live here |
 | `backend/app/providers/base.py` | Provider ABCs + `Quote` | Decision 3 and 4 |
+| `backend/app/providers/duffel.py` | Live flight prices (Duffel) | First real provider; active when `DUFFEL_API_KEY` is set |
 | `backend/app/providers/*.py` | Stub/real price sources | One file per source; swap without touching the engine |
-| `backend/app/data/airports.py` | Metro → airports mapping | Nearby-airport logic needs curated data, not an API |
-| `docker-compose.yml` | api + postgres + redis | Dev matches prod (decision 7) |
+| `backend/app/data/airports.py` | Metro → airports mapping | Nearby-airport logic needs curated data, not an API || `docker-compose.yml` | api + postgres + redis | Dev matches prod (decision 7) |
 | `frontend/` | Vite + React UI | Thin client over the API (decision 8) |
