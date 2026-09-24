@@ -12,12 +12,12 @@ branch is dropped with a warning instead of failing the whole trip
 """
 
 import asyncio
+import logging
 import uuid
 
 from app.data.airports import lookup_city
 from app.models import (
     LegQuote,
-    QuoteConfidence,
     TravelMode,
     TripOption,
     TripPlan,
@@ -32,6 +32,8 @@ from app.providers.base import (
 )
 
 _BRANCH_TIMEOUT_S = 20
+
+log = logging.getLogger(__name__)
 
 
 def _trip_days(req: TripRequest) -> int:
@@ -195,7 +197,9 @@ async def plan_trip(
     for r in results:
         if isinstance(r, TripOption):
             options.append(r)
-        # Exceptions (incl. timeouts) drop their branch silently here;
-        # a production build logs them and surfaces per-option warnings.
+        elif isinstance(r, Exception):
+            # A failed branch drops out of the ranking instead of failing the
+            # trip — but it gets logged so silent data loss is visible.
+            log.warning("dropped a trip branch: %r", r)
     options.sort(key=lambda o: o.total_usd)
     return TripPlan(origin=req.origin, destination_city=req.destination_city, options=options)
