@@ -1,0 +1,31 @@
+# Dev matches prod: API + Postgres + Redis in one command.
+# Phase 1: the API runs against stub providers, so no API keys are needed.
+# Phase 1b: wire DATABASE_URL / REDIS_URL from these services into the app.
+
+services:
+  api:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://fareenough:fareenough@db:5432/fareenough
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  db:
+    image: postgres:16
+    environment:
+      - POSTGRES_USER=fareenough
+      - POSTGRES_PASSWORD=fareenough
+      - POSTGRES_DB=fareenough
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+
+volumes:
+  postgres-data:
