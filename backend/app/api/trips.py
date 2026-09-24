@@ -8,12 +8,15 @@ takes over in Phase 1b.
 """
 
 import asyncio
+import logging
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 
+from app.config import settings
 from app.core.orchestrator import plan_trip
 from app.models import JobStatus, TripJob, TripRequest
+from app.providers.duffel import DuffelFlightProvider
 from app.providers.stubs import (
     HeuristicGroundProvider,
     StubDrivingProvider,
@@ -21,6 +24,8 @@ from app.providers.stubs import (
     StubFuelProvider,
     StubRentalCarProvider,
 )
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/trips", tags=["trips"])
 
@@ -31,13 +36,21 @@ _JOBS: dict[str, TripJob] = {}
 def _providers():
     # One place where concrete providers are chosen — swap stubs for real
     # implementations here without touching the orchestrator or routes.
-    return dict(
-        flights=StubFlightProvider(),
-        driving=StubDrivingProvider(),
-        ground=HeuristicGroundProvider(),
-        rental=StubRentalCarProvider(),
-        fuel=StubFuelProvider(),
-    )
+    # Duffel takes over flights the moment DUFFEL_API_KEY is set; everything
+    # else stays on stubs until its real provider lands.
+    if settings.duffel_api_key:
+        log.info("flights: Duffel (live prices)")
+        flights = DuffelFlightProvider(settings.duffel_api_key)
+    else:
+        log.info("flights: stub (set DUFFEL_API_KEY for live prices)")
+        flights = StubFlightProvider()
+    return {
+        "flights": flights,
+        "driving": StubDrivingProvider(),
+        "ground": HeuristicGroundProvider(),
+        "rental": StubRentalCarProvider(),
+        "fuel": StubFuelProvider(),
+    }
 
 
 async def _run_job(job_id: str, req: TripRequest) -> None:
