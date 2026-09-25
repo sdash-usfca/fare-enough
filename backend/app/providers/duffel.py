@@ -116,9 +116,9 @@ class DuffelFlightProvider(FlightProvider):
             raise DuffelError(f"Duffel request failed: {exc}") from exc
         finally:
             if self._client is None:
-                await client.close()
+                await client.aclose()
 
-        if resp.status_code != 200:
+        if resp.status_code not in (200, 201):
             raise DuffelError(f"Duffel HTTP {resp.status_code}: {resp.text[:200]}")
         try:
             offers = resp.json()["data"].get("offers") or []
