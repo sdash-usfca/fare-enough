@@ -18,6 +18,7 @@ from app.core.orchestrator import plan_trip
 from app.models import JobStatus, TripJob, TripRequest
 from app.providers.duffel import DuffelFlightProvider
 from app.providers.geo import FallbackGeocoder, NominatimGeocoder, StubGeocoder
+from app.providers.osrm import FallbackDrivingProvider, OSRMDrivingProvider
 from app.providers.stubs import (
     HeuristicGroundProvider,
     StubDrivingProvider,
@@ -45,15 +46,22 @@ def _providers():
     else:
         log.info("flights: stub (set DUFFEL_API_KEY for live prices)")
         flights = StubFlightProvider()
+    # Real geocoding needs no API key (Nominatim); the curated stub
+    # covers the demo corridor if Nominatim is unreachable.
+    geocoder: FallbackGeocoder = FallbackGeocoder(
+        [NominatimGeocoder(), StubGeocoder()]
+    )
     return {
         "flights": flights,
-        "driving": StubDrivingProvider(),
+        # Real road distances via OSRM; the stub survives as a labeled
+        # ESTIMATED fallback so a demo-server hiccup doesn't kill driving.
+        "driving": FallbackDrivingProvider(
+            [OSRMDrivingProvider(geocoder), StubDrivingProvider()]
+        ),
         "ground": HeuristicGroundProvider(),
         "rental": StubRentalCarProvider(),
         "fuel": StubFuelProvider(),
-        # Real geocoding needs no API key (Nominatim); the curated stub
-        # covers the demo corridor if Nominatim is unreachable.
-        "geocoder": FallbackGeocoder([NominatimGeocoder(), StubGeocoder()]),
+        "geocoder": geocoder,
     }
 
 
