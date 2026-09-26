@@ -117,3 +117,48 @@ async def test_auth_and_version_headers():
         "SEA", "LAX", date(2026, 10, 16), _prefs())
     assert seen["auth"] == "Bearer duffel_test_secret"
     assert seen["version"] == "v2"
+
+
+async def test_roundtrip_sends_two_slices_and_prices_both_directions():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content.decode())
+        out_slice = _offer("0", "08:00", "10:30")["slices"][0]
+        ret_slice = _offer("0", "18:00", "20:15")["slices"][0]
+        return httpx.Response(200, json={"data": {"offers": [
+            {"total_amount": "399.00", "total_currency": "USD",
+             "slices": [out_slice, ret_slice]},
+        ]}})
+
+    quotes = await DuffelFlightProvider(
+        "duffel_test_x", _mock_client(handler)).search(
+            "SEA", "LAX", date(2026, 10, 16),
+            _prefs(earliest_departure="06:00", latest_departure="12:00"),
+            date(2026, 10, 19))
+    slices = seen["body"]["data"]["slices"]
+    assert len(slices) == 2
+    assert (slices[0]["origin"], slices[0]["destination"]) == ("SEA", "LAX")
+    assert slices[0]["departure_date"] == "2026-10-16"
+    assert (slices[1]["origin"], slices[1]["destination"]) == ("LAX", "SEA")
+    assert slices[1]["departure_date"] == "2026-10-19"
+    # time window applies to the outbound slice only
+    assert slices[0]["departure_time"] == {"from": "06:00", "to": "12:00"}
+    assert "departure_time" not in slices[1]
+    # the offer total already covers both directions — never doubled
+    assert len(quotes) == 1
+    assert quotes[0].amount_usd == 399.00
+    assert "return" in quotes[0].detail
+
+
+async def test_oneway_still_sends_single_slice():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content.decode())
+        return httpx.Response(200, json={"data": {"offers": []}})
+
+    await DuffelFlightProvider("duffel_test_x",
+                               _mock_client(handler)).search(
+        "SEA", "LAX", date(2026, 10, 16), _prefs())
+    assert len(seen["body"]["data"]["slices"]) == 1
