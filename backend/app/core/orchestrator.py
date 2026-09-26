@@ -16,7 +16,7 @@ import asyncio
 import logging
 import uuid
 
-from app.data.airports import lookup_city
+from app.data.airports import ORIGIN_AIRPORTS, lookup_city
 from app.models import (
     LegQuote,
     TravelMode,
@@ -30,6 +30,12 @@ from app.providers.base import (
     FuelPriceProvider,
     GroundTransportProvider,
     RentalCarProvider,
+)
+from app.providers.geo import (
+    GeocodingProvider,
+    GeoError,
+    GeoPoint,
+    haversine_miles,
 )
 
 _BRANCH_TIMEOUT_S = 20
@@ -47,31 +53,51 @@ def _roundtrip(req: TripRequest) -> bool:
     return req.return_date is not None
 
 
-def _origin_airport(req: TripRequest) -> str:
-    low = req.origin.lower()
-    if "san francisco" in low or "sfo" in low:
-        return "SFO"
-    return "SEA"  # STUB: real impl geocodes origin → nearest airport
+def _nearest_origin_airport(point: GeoPoint) -> tuple[str, float]:
+    """Nearest origin airport to a geocoded point + straight-line miles."""
+    best, best_mi = "SEA", float("inf")
+    for code, (lat, lon) in ORIGIN_AIRPORTS.items():
+        mi = haversine_miles(point, GeoPoint(lat, lon))
+        if mi < best_mi:
+            best, best_mi = code, mi
+    return best, round(best_mi, 1)
+
+
+async def _resolve_origin(
+    req: TripRequest, geocoder: GeocodingProvider
+) -> tuple[str, float]:
+    """Geocode the origin → (nearest origin airport, home→airport miles).
+
+    Raises GeoError if the origin can't be located — the caller turns that
+    into a user-visible warning and still prices drive options.
+    """
+    point = await geocoder.geocode(req.origin)
+    if point is None:
+        raise GeoError(f"could not locate origin {req.origin!r}")
+    return _nearest_origin_airport(point)
 
 
 async def _price_fly_option(
     req: TripRequest,
     dest_airport: str,
     airport_miles: float,
+    origin_airport: str,
+    home_miles: float,
     flights: FlightProvider,
     ground: GroundTransportProvider,
     rental: RentalCarProvider,
     days: int,
 ) -> TripOption | None:
     """Price one fly branch: home → origin airport → dest airport → city."""
-    origin_airport = _origin_airport(req)
     legs: list[LegQuote] = []
     warnings: list[str] = []
     roundtrip = _roundtrip(req)
 
     # Home → origin airport: rideshare vs parking, cheaper wins.
+    # home_miles is straight-line from geocoding — the "~" in the detail
+    # comes from the heuristic provider, so the estimate stays honest.
     ride, park = await asyncio.gather(
-        ground.rideshare_estimate(18.0),  # STUB miles; real impl geocodes home
+        ground.rideshare_estimate(home_miles),
         ground.airport_parking(origin_airport, days),
     )
     if ride.amount_usd <= park.amount_usd:
@@ -183,9 +209,11 @@ async def plan_trip(
     ground: GroundTransportProvider,
     rental: RentalCarProvider,
     fuel: FuelPriceProvider,
+    geocoder: GeocodingProvider,
 ) -> TripPlan:
     days = _trip_days(req)
     branches: list[tuple[str, asyncio.Coroutine]] = []
+    plan_warnings: list[str] = []
 
     if req.mode in (TravelMode.FLY, TravelMode.EITHER):
         airports = lookup_city(req.destination_city)
@@ -194,11 +222,18 @@ async def plan_trip(
             miles_map = airports["miles_to_city_center"]
         else:
             candidates, miles_map = [], {}
-        origin_airport = _origin_airport(req)
+        try:
+            # One geocode for all fly branches — not one per airport.
+            origin_airport, home_miles = await _resolve_origin(req, geocoder)
+        except GeoError as exc:
+            # No origin → no fly options, but drive options can still price.
+            plan_warnings.append(f"flight options unavailable ({exc})")
+            candidates = []
         for ap in candidates:
             branches.append((
                 f"flight {origin_airport}→{ap}",
                 _price_fly_option(req, ap, miles_map.get(ap, 20.0),
+                                 origin_airport, home_miles,
                                  flights, ground, rental, days),
             ))
 
@@ -221,7 +256,7 @@ async def plan_trip(
         return_exceptions=True,
     )
     options: list[TripOption] = []
-    warnings: list[str] = []
+    warnings: list[str] = plan_warnings
     for (label, _), r in zip(branches, results):
         if isinstance(r, TripOption):
             options.append(r)
