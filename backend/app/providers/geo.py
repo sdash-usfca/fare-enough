@@ -112,12 +112,20 @@ class FallbackGeocoder(GeocodingProvider):
     """Try providers in order; first hit wins.
 
     Lets the app prefer the real geocoder with the curated stub as a safety
-    net for known places — a small Chain of Responsibility."""
+    net for known places — a small Chain of Responsibility. Results are
+    memoized per instance: one trip geocodes each place once even though
+    the origin airport resolution and both drive branches all ask."""
 
     def __init__(self, providers: list[GeocodingProvider]):
         self._providers = providers
+        self._cache: dict[str, GeoPoint | None] = {}
 
     async def geocode(self, place: str) -> GeoPoint | None:
+        if place not in self._cache:
+            self._cache[place] = await self._geocode_uncached(place)
+        return self._cache[place]
+
+    async def _geocode_uncached(self, place: str) -> GeoPoint | None:
         for provider in self._providers:
             point = await provider.geocode(place)
             if point is not None:
