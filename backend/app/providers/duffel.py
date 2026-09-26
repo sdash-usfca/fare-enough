@@ -39,7 +39,9 @@ def _is_red_eye(departure_hhmm: str) -> bool:
     return hour >= 21 or hour < 5
 
 
-def _offer_to_quote(offer: dict) -> tuple[str, FlightQuote] | None:
+def _offer_to_quote(
+    offer: dict, confidence: QuoteConfidence
+) -> tuple[str, FlightQuote] | None:
     """Map one Duffel offer → (departure HH:MM, FlightQuote). None if malformed."""
     try:
         amount = float(offer["total_amount"])
@@ -55,7 +57,7 @@ def _offer_to_quote(offer: dict) -> tuple[str, FlightQuote] | None:
     stops_label = "nonstop" if stops == 0 else f"{stops} stop"
     quote = FlightQuote(
         amount_usd=round(amount, 2),
-        confidence=QuoteConfidence.LIVE,
+        confidence=confidence,
         source="duffel",
         detail=f"{carrier} {number}, {dep}→{arr}, {stops_label}".strip(),
     )
@@ -68,6 +70,13 @@ class DuffelFlightProvider(FlightProvider):
     def __init__(self, api_key: str, client: httpx.AsyncClient | None = None):
         self._api_key = api_key
         self._client = client  # injectable — tests pass a MockTransport client
+        # Test-mode keys return realistic sandbox fares that can't be booked,
+        # so they must not be labeled LIVE. Production keys get LIVE.
+        self._confidence = (
+            QuoteConfidence.SANDBOX
+            if api_key.startswith("duffel_test_")
+            else QuoteConfidence.LIVE
+        )
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -127,7 +136,7 @@ class DuffelFlightProvider(FlightProvider):
 
         quotes: list[FlightQuote] = []
         for offer in offers:
-            mapped = _offer_to_quote(offer)
+            mapped = _offer_to_quote(offer, self._confidence)
             if mapped is None:
                 continue
             dep_hhmm, quote = mapped
