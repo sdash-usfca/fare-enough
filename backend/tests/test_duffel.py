@@ -35,7 +35,7 @@ def _prefs(**overrides):
     return FlightPrefs(**base)
 
 
-async def test_maps_offers_cheapest_first_with_live_confidence():
+async def test_maps_offers_cheapest_first_with_sandbox_confidence():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"data": {"offers": [
             _offer("259.99", "14:00", "16:30"),
@@ -46,9 +46,22 @@ async def test_maps_offers_cheapest_first_with_live_confidence():
                                         _mock_client(handler)).search(
         "SEA", "LAX", date(2026, 10, 16), _prefs())
     assert [q.amount_usd for q in quotes] == [189.50, 259.99]
-    assert all(q.confidence == QuoteConfidence.LIVE for q in quotes)
+    # test-mode keys return sandbox fares: realistic, but not bookable
+    assert all(q.confidence == QuoteConfidence.SANDBOX for q in quotes)
     assert all(q.source == "duffel" for q in quotes)
     assert "nonstop" in quotes[0].detail
+
+
+async def test_live_key_gets_live_confidence():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": {"offers": [
+            _offer("189.50", "08:00", "10:30"),
+        ]}})
+
+    quotes = await DuffelFlightProvider("duffel_live_x",
+                                        _mock_client(handler)).search(
+        "SEA", "LAX", date(2026, 10, 16), _prefs())
+    assert all(q.confidence == QuoteConfidence.LIVE for q in quotes)
 
 
 async def test_red_eye_filtered_when_not_ok():
