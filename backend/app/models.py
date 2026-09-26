@@ -35,6 +35,7 @@ class TripRequest(BaseModel):
 
 class QuoteConfidence(str, Enum):
     LIVE = "live"  # priced from a real API just now
+    SANDBOX = "sandbox"  # real API response, but test-mode data (not bookable)
     ESTIMATED = "estimated"  # heuristic / cached / stub
 
 
@@ -61,6 +62,7 @@ class TripPlan(BaseModel):
     origin: str
     destination_city: str
     options: list[TripOption]  # ranked cheapest-first
+    warnings: list[str] = []  # plan-level notes, e.g. dropped provider branches
 
 
 class JobStatus(str, Enum):
