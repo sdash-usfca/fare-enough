@@ -6,6 +6,7 @@ from datetime import date
 from app.core.orchestrator import plan_trip
 from app.models import QuoteConfidence, TravelMode, TripRequest
 from app.providers.base import FlightQuote
+from app.providers.geo import StubGeocoder
 from app.providers.stubs import (
     HeuristicGroundProvider,
     StubDrivingProvider,
@@ -34,6 +35,7 @@ def _providers():
         "ground": HeuristicGroundProvider(),
         "rental": StubRentalCarProvider(),
         "fuel": StubFuelProvider(),
+        "geocoder": StubGeocoder(),
     }
 
 
@@ -138,3 +140,28 @@ async def test_oneway_leaves_amounts_undoubled():
     for option in fly_options:
         flight_legs = [l for l in option.legs if l.label.startswith("Flight ")]
         assert flight_legs[0].amount_usd == 100.0
+
+
+class _NullGeocoder(StubGeocoder):
+    async def geocode(self, place: str):
+        return None
+
+
+async def test_unresolvable_origin_warns_but_drive_options_survive():
+    providers = _providers()
+    providers["geocoder"] = _NullGeocoder()
+    plan = await plan_trip(_req(), **providers)
+    assert any("flight options unavailable" in w for w in plan.warnings)
+    assert any("could not locate origin" in w for w in plan.warnings)
+    # drive options don't need an airport, so they still price
+    assert plan.options
+    assert all(o.mode == TravelMode.DRIVE for o in plan.options)
+
+
+async def test_home_airport_miles_come_from_geocoding():
+    # Auburn → SEA is ~11 mi straight-line; the old code hardcoded 18.0.
+    plan = await plan_trip(_req(), **_providers())
+    fly = next(o for o in plan.options if o.mode == TravelMode.FLY)
+    home_leg = next(l for l in fly.legs if l.label.startswith("Rideshare home"))
+    assert "~11 mi" in home_leg.detail
+    assert "18 mi" not in home_leg.detail
