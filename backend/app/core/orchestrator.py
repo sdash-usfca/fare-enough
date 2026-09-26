@@ -67,6 +67,7 @@ async def _price_fly_option(
     origin_airport = _origin_airport(req)
     legs: list[LegQuote] = []
     warnings: list[str] = []
+    roundtrip = _roundtrip(req)
 
     # Home → origin airport: rideshare vs parking, cheaper wins.
     ride, park = await asyncio.gather(
@@ -74,17 +75,17 @@ async def _price_fly_option(
         ground.airport_parking(origin_airport, days),
     )
     if ride.amount_usd <= park.amount_usd:
-        legs.append(LegQuote(label=f"Rideshare home → {origin_airport}",
-                             amount_usd=ride.amount_usd, confidence=ride.confidence,
-                             source=ride.source, detail=ride.detail))
+        legs.append(_roundtrip_leg(
+            f"Rideshare home → {origin_airport}", ride, roundtrip))
     else:
         legs.append(LegQuote(label=f"Drive + park at {origin_airport} ({days}d)",
                              amount_usd=park.amount_usd, confidence=park.confidence,
                              source=park.source, detail=park.detail))
 
-    # Flight: cheapest offer for this airport pair.
+    # Flight: cheapest offer for this airport pair. The provider prices the
+    # full round trip when return_date is set — never double it here.
     offers = await flights.search(origin_airport, dest_airport, req.depart_date,
-                                  req.flight_prefs)
+                                  req.flight_prefs, req.return_date)
     if not offers:
         return None
     best = offers[0]
@@ -98,18 +99,15 @@ async def _price_fly_option(
         rental.quote(days, dest_airport),
     )
     if ride_out.amount_usd <= rental_q.amount_usd:
-        legs.append(LegQuote(label=f"Rideshare {dest_airport} → {req.destination_city}",
-                             amount_usd=ride_out.amount_usd, confidence=ride_out.confidence,
-                             source=ride_out.source, detail=ride_out.detail))
+        legs.append(_roundtrip_leg(
+            f"Rideshare {dest_airport} → {req.destination_city}",
+            ride_out, roundtrip))
     else:
         legs.append(LegQuote(label=f"Rental car at {dest_airport} ({days}d)",
                              amount_usd=rental_q.amount_usd, confidence=rental_q.confidence,
                              source=rental_q.source, detail=rental_q.detail))
 
     total = round(sum(l.amount_usd for l in legs), 2)
-    if _roundtrip(req):
-        total = round(total * 2, 2)  # simplification: symmetric round trip
-        warnings.append("Round trip priced as 2x one-way (refine with return-date search)")
     return TripOption(
         id=f"fly-{dest_airport.lower()}-{uuid.uuid4().hex[:6]}",
         mode=TravelMode.FLY,
@@ -164,6 +162,18 @@ def _error_summary(exc: BaseException) -> str:
         return "timed out"
     msg = str(exc).strip().splitlines()[0] if str(exc).strip() else ""
     return msg[:120] if msg else type(exc).__name__
+
+
+def _roundtrip_leg(label: str, quote, roundtrip: bool) -> LegQuote:
+    """Build a leg from a one-way MoneyQuote, doubling it for round trips.
+
+    Only per-direction legs (rideshares) go through here — duration-priced
+    legs like parking and rentals are already round-trip-aware."""
+    amount = quote.amount_usd * (2 if roundtrip else 1)
+    detail = quote.detail + (" — ×2 covers the return trip" if roundtrip else "")
+    return LegQuote(label=label, amount_usd=round(amount, 2),
+                    confidence=quote.confidence, source=quote.source,
+                    detail=detail)
 
 
 async def plan_trip(
