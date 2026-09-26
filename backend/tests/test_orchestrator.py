@@ -7,6 +7,7 @@ from app.core.orchestrator import plan_trip
 from app.models import QuoteConfidence, TravelMode, TripRequest
 from app.providers.base import FlightQuote
 from app.providers.geo import StubGeocoder
+from app.providers.osrm import FallbackDrivingProvider
 from app.providers.stubs import (
     HeuristicGroundProvider,
     StubDrivingProvider,
@@ -31,7 +32,9 @@ def _req(**overrides) -> TripRequest:
 def _providers():
     return {
         "flights": StubFlightProvider(),
-        "driving": StubDrivingProvider(),
+        # fallback wrapper around the stub: same shape as prod wiring,
+        # no network in tests
+        "driving": FallbackDrivingProvider([StubDrivingProvider()]),
         "ground": HeuristicGroundProvider(),
         "rental": StubRentalCarProvider(),
         "fuel": StubFuelProvider(),
