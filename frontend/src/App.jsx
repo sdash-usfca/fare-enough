@@ -71,6 +71,13 @@ export default function App() {
 
       {plan && (
         <div style={{ display: 'grid', gap: 12 }}>
+          {plan.warnings && plan.warnings.length > 0 && (
+            <div style={{ border: '1px solid #c90', borderRadius: 8, padding: 12, background: '#fff8e6' }}>
+              {plan.warnings.map((w, i) => (
+                <div key={i} style={{ color: '#a60' }}>⚠ {w}</div>
+              ))}
+            </div>
+          )}
           {plan.options.map((o) => (
             <div key={o.id} style={{ border: '1px solid #ccc', borderRadius: 8, padding: 12 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
