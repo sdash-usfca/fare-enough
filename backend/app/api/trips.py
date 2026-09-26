@@ -17,6 +17,7 @@ from app.config import settings
 from app.core.orchestrator import plan_trip
 from app.models import JobStatus, TripJob, TripRequest
 from app.providers.duffel import DuffelFlightProvider
+from app.providers.geo import FallbackGeocoder, NominatimGeocoder, StubGeocoder
 from app.providers.stubs import (
     HeuristicGroundProvider,
     StubDrivingProvider,
@@ -50,6 +51,9 @@ def _providers():
         "ground": HeuristicGroundProvider(),
         "rental": StubRentalCarProvider(),
         "fuel": StubFuelProvider(),
+        # Real geocoding needs no API key (Nominatim); the curated stub
+        # covers the demo corridor if Nominatim is unreachable.
+        "geocoder": FallbackGeocoder([NominatimGeocoder(), StubGeocoder()]),
     }
 
 
