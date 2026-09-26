@@ -39,27 +39,48 @@ def _is_red_eye(departure_hhmm: str) -> bool:
     return hour >= 21 or hour < 5
 
 
+def _slice_detail(s: dict) -> str | None:
+    """Human one-liner for one slice's segments. None if malformed."""
+    try:
+        segments = s["segments"]
+        first, last = segments[0], segments[-1]
+        dep = first["departing_at"][11:16]  # "2026-10-16T06:10:00" → "06:10"
+        arr = last["arriving_at"][11:16]
+        carrier = first.get("marketing_carrier", {}).get("iata_code", "")
+        number = first.get("marketing_carrier_flight_number", "")
+        stops = len(segments) - 1
+        stops_label = "nonstop" if stops == 0 else f"{stops} stop"
+        return f"{carrier} {number}, {dep}→{arr}, {stops_label}".strip()
+    except (KeyError, IndexError, TypeError):
+        return None
+
+
 def _offer_to_quote(
     offer: dict, confidence: QuoteConfidence
 ) -> tuple[str, FlightQuote] | None:
-    """Map one Duffel offer → (departure HH:MM, FlightQuote). None if malformed."""
+    """Map one Duffel offer → (outbound departure HH:MM, FlightQuote).
+
+    None if malformed. For round trips, total_amount already covers both
+    directions — the orchestrator must NOT double it again."""
     try:
         amount = float(offer["total_amount"])
-        segments = offer["slices"][0]["segments"]
-        first, last = segments[0], segments[-1]
-    except (KeyError, IndexError, TypeError, ValueError):
+        slices = offer["slices"]
+    except (KeyError, TypeError, ValueError):
         return None
-    dep = first["departing_at"][11:16]  # "2026-10-16T06:10:00" → "06:10"
-    arr = last["arriving_at"][11:16]
-    carrier = first.get("marketing_carrier", {}).get("iata_code", "")
-    number = first.get("marketing_carrier_flight_number", "")
-    stops = len(segments) - 1
-    stops_label = "nonstop" if stops == 0 else f"{stops} stop"
+    out_detail = _slice_detail(slices[0]) if slices else None
+    if out_detail is None:
+        return None
+    dep = slices[0]["segments"][0]["departing_at"][11:16]
+    detail = out_detail
+    if len(slices) > 1:
+        ret_detail = _slice_detail(slices[1])
+        if ret_detail:
+            detail += f" + return {ret_detail}"
     quote = FlightQuote(
         amount_usd=round(amount, 2),
         confidence=confidence,
         source="duffel",
-        detail=f"{carrier} {number}, {dep}→{arr}, {stops_label}".strip(),
+        detail=detail,
     )
     return dep, quote
 
@@ -87,23 +108,39 @@ class DuffelFlightProvider(FlightProvider):
         }
 
     def _request_body(
-        self, origin_airport: str, dest_airport: str, depart: date, prefs: FlightPrefs
+        self,
+        origin_airport: str,
+        dest_airport: str,
+        depart: date,
+        prefs: FlightPrefs,
+        return_date: date | None = None,
     ) -> dict:
-        slice_: dict = {
-            "origin": origin_airport,
-            "destination": dest_airport,
-            "departure_date": depart.isoformat(),
-        }
+        slices = [
+            {
+                "origin": origin_airport,
+                "destination": dest_airport,
+                "departure_date": depart.isoformat(),
+            }
+        ]
         # Time windows are filtered server-side by Duffel — cheaper than
-        # fetching everything and filtering here.
+        # fetching everything and filtering here. Applied to the outbound
+        # slice only; the return is left open.
         if prefs.earliest_departure or prefs.latest_departure:
-            slice_["departure_time"] = {
+            slices[0]["departure_time"] = {
                 "from": prefs.earliest_departure or "00:00",
                 "to": prefs.latest_departure or "23:59",
             }
+        if return_date:
+            slices.append(
+                {
+                    "origin": dest_airport,
+                    "destination": origin_airport,
+                    "departure_date": return_date.isoformat(),
+                }
+            )
         return {
             "data": {
-                "slices": [slice_],
+                "slices": slices,
                 "passengers": [{"type": "adult"}],
                 "cabin_class": "economy",
                 "max_connections": 1,
@@ -111,13 +148,20 @@ class DuffelFlightProvider(FlightProvider):
         }
 
     async def search(
-        self, origin_airport: str, dest_airport: str, depart: date, prefs: FlightPrefs
+        self,
+        origin_airport: str,
+        dest_airport: str,
+        depart: date,
+        prefs: FlightPrefs,
+        return_date: date | None = None,
     ) -> list[FlightQuote]:
         url = (
             f"{_BASE_URL}/air/offer_requests"
             f"?return_offers=true&supplier_timeout={_SUPPLIER_TIMEOUT_MS}"
         )
-        body = self._request_body(origin_airport, dest_airport, depart, prefs)
+        body = self._request_body(
+            origin_airport, dest_airport, depart, prefs, return_date
+        )
         client = self._client or httpx.AsyncClient(timeout=25.0)
         try:
             resp = await client.post(url, headers=self._headers(), json=body)
