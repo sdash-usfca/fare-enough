@@ -100,3 +100,18 @@ async def test_nominatim_http_error_is_none():
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     assert await NominatimGeocoder(client).geocode("Seattle, WA") is None
+
+
+async def test_fallback_geocoder_memoizes_per_instance():
+    calls = []
+
+    class _Counting(StubGeocoder):
+        async def geocode(self, place: str):
+            calls.append(place)
+            return await super().geocode(place)
+
+    fb = FallbackGeocoder([_Counting()])
+    await fb.geocode("Seattle, WA")
+    await fb.geocode("Seattle, WA")
+    await fb.geocode("Los Angeles, CA")
+    assert calls == ["Seattle, WA", "Los Angeles, CA"]
