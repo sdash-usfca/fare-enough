@@ -64,3 +64,39 @@ async def test_every_leg_names_its_source_and_confidence():
         for leg in option.legs:
             assert leg.source  # honest UX: every number says where it came from
             assert leg.confidence
+
+
+class _ExplodingFlightProvider(StubFlightProvider):
+    async def search(self, *args, **kwargs):
+        raise RuntimeError("Duffel exploded")
+
+
+async def test_failed_branch_becomes_plan_warning_not_silent_drop():
+    providers = _providers()
+    providers["flights"] = _ExplodingFlightProvider()
+    plan = await plan_trip(_req(), **providers)
+    # drive options survive the flight outage
+    assert plan.options
+    assert all(o.mode == TravelMode.DRIVE for o in plan.options)
+    # every failed fly branch is reported to the user, naming the branch
+    assert len(plan.warnings) == 5  # LAX + 4 nearby airports
+    assert all(w.startswith("flight SEA→") for w in plan.warnings)
+    assert all("Duffel exploded" in w for w in plan.warnings)
+
+
+class _SlowFlightProvider(StubFlightProvider):
+    async def search(self, *args, **kwargs):
+        raise TimeoutError()
+
+
+async def test_timed_out_branch_reports_timeout():
+    providers = _providers()
+    providers["flights"] = _SlowFlightProvider()
+    plan = await plan_trip(_req(), **providers)
+    assert plan.warnings
+    assert all("timed out" in w for w in plan.warnings)
+
+
+async def test_healthy_run_has_no_warnings():
+    plan = await plan_trip(_req(), **_providers())
+    assert plan.warnings == []
