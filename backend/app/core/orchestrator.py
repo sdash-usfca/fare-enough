@@ -7,7 +7,8 @@ The tree (see README/ARCHITECTURE):
   drive = own car (fuel only)  vs  rental car (rate + fuel + insurance)
 
 All provider calls fan out concurrently with per-branch timeouts; a failed
-branch is dropped with a warning instead of failing the whole trip
+branch is dropped from the ranking but reported in the plan's warnings so
+the user sees what went missing instead of silently fewer options
 (ARCHITECTURE.md decision 6).
 """
 
@@ -157,6 +158,14 @@ async def _price_drive_option(
     )
 
 
+def _error_summary(exc: BaseException) -> str:
+    """Short human-readable cause for a dropped branch (no tracebacks)."""
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+        return "timed out"
+    msg = str(exc).strip().splitlines()[0] if str(exc).strip() else ""
+    return msg[:120] if msg else type(exc).__name__
+
+
 async def plan_trip(
     req: TripRequest,
     flights: FlightProvider,
@@ -166,7 +175,7 @@ async def plan_trip(
     fuel: FuelPriceProvider,
 ) -> TripPlan:
     days = _trip_days(req)
-    branches = []
+    branches: list[tuple[str, asyncio.Coroutine]] = []
 
     if req.mode in (TravelMode.FLY, TravelMode.EITHER):
         airports = lookup_city(req.destination_city)
@@ -175,31 +184,49 @@ async def plan_trip(
             miles_map = airports["miles_to_city_center"]
         else:
             candidates, miles_map = [], {}
+        origin_airport = _origin_airport(req)
         for ap in candidates:
-            branches.append(
+            branches.append((
+                f"flight {origin_airport}→{ap}",
                 _price_fly_option(req, ap, miles_map.get(ap, 20.0),
-                                 flights, ground, rental, days)
-            )
+                                 flights, ground, rental, days),
+            ))
 
     if req.mode in (TravelMode.DRIVE, TravelMode.EITHER):
-        branches.append(_price_drive_option(req, True, driving, fuel, rental, days))
+        branches.append((
+            "drive (own car)",
+            _price_drive_option(req, True, driving, fuel, rental, days),
+        ))
         if not req.own_car:
             # User has no car: rental is the only drive option; still show both
             # so they can compare against borrowing/buying later. Keep both.
             pass
-        branches.append(_price_drive_option(req, False, driving, fuel, rental, days))
+        branches.append((
+            "drive (rental car)",
+            _price_drive_option(req, False, driving, fuel, rental, days),
+        ))
 
     results = await asyncio.gather(
-        *(asyncio.wait_for(b, timeout=_BRANCH_TIMEOUT_S) for b in branches),
+        *(asyncio.wait_for(coro, timeout=_BRANCH_TIMEOUT_S) for _, coro in branches),
         return_exceptions=True,
     )
     options: list[TripOption] = []
-    for r in results:
+    warnings: list[str] = []
+    for (label, _), r in zip(branches, results):
         if isinstance(r, TripOption):
             options.append(r)
         elif isinstance(r, Exception):
             # A failed branch drops out of the ranking instead of failing the
-            # trip — but it gets logged so silent data loss is visible.
+            # trip — logged for operators, and surfaced in plan warnings so
+            # the user knows an option went missing and why.
             log.warning("dropped a trip branch: %r", r)
+            warnings.append(
+                f"{label} unavailable ({_error_summary(r)}) — excluded from results"
+            )
     options.sort(key=lambda o: o.total_usd)
-    return TripPlan(origin=req.origin, destination_city=req.destination_city, options=options)
+    return TripPlan(
+        origin=req.origin,
+        destination_city=req.destination_city,
+        options=options,
+        warnings=warnings,
+    )
