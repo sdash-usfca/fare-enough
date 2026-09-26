@@ -75,16 +75,25 @@ class StubFlightProvider(FlightProvider):
     """STUB. Real impl: Duffel offer requests for the airport pair + date."""
 
     async def search(
-        self, origin_airport: str, dest_airport: str, depart: date, prefs: FlightPrefs
+        self,
+        origin_airport: str,
+        dest_airport: str,
+        depart: date,
+        prefs: FlightPrefs,
+        return_date: date | None = None,
     ) -> list[FlightQuote]:
         seed = f"{origin_airport}{dest_airport}{depart.isoformat()}"
         h = int(hashlib.sha256(seed.encode()).hexdigest(), 16)
         base = 79 + (h % 180)  # deterministic $79–$259
+        trip_note = "round trip" if return_date else "one-way"
+        # STUB simplification: round trip ≈ 2× one-way (Duffel prices it properly).
+        mult = 2 if return_date else 1
         quotes = [
-            FlightQuote(base, QuoteConfidence.ESTIMATED, "stub-flight",
-                        f"Stub Air {100 + h % 800}, nonstop (illustrative)"),
-            FlightQuote(round(base * 1.35, 2), QuoteConfidence.ESTIMATED, "stub-flight",
-                        "Stub Air, 1 stop (illustrative)"),
+            FlightQuote(round(base * mult, 2), QuoteConfidence.ESTIMATED, "stub-flight",
+                        f"Stub Air {100 + h % 800}, nonstop (illustrative, {trip_note})"),
+            FlightQuote(round(base * 1.35 * mult, 2), QuoteConfidence.ESTIMATED,
+                        "stub-flight",
+                        f"Stub Air, 1 stop (illustrative, {trip_note})"),
         ]
         if not prefs.red_eye_ok:
             # STUB: real impl filters departures by time window server-side.
