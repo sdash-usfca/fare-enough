@@ -46,3 +46,15 @@ AIRPORTS: dict[str, dict] = {
 
 def lookup_city(city: str) -> dict | None:
     return AIRPORTS.get(city.strip().lower())
+
+
+# Origin airport candidates with coordinates. The geocoded origin's nearest
+# entry wins. Kept small and curated: on the departure side, "nearest major
+# airport" is a stable, human-verifiable fact — no API needed.
+ORIGIN_AIRPORTS: dict[str, tuple[float, float]] = {
+    "SEA": (47.4502, -122.3088),  # Seattle–Tacoma
+    "PDX": (45.5898, -122.5969),  # Portland
+    "SFO": (37.6213, -122.3790),  # San Francisco
+    "SJC": (37.3639, -121.9289),  # San Jose
+    "OAK": (37.7126, -122.2197),  # Oakland
+}
