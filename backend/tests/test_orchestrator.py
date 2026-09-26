@@ -4,7 +4,8 @@ without network access (ARCHITECTURE.md decision 3 paying off)."""
 from datetime import date
 
 from app.core.orchestrator import plan_trip
-from app.models import TravelMode, TripRequest
+from app.models import QuoteConfidence, TravelMode, TripRequest
+from app.providers.base import FlightQuote
 from app.providers.stubs import (
     HeuristicGroundProvider,
     StubDrivingProvider,
@@ -100,3 +101,40 @@ async def test_timed_out_branch_reports_timeout():
 async def test_healthy_run_has_no_warnings():
     plan = await plan_trip(_req(), **_providers())
     assert plan.warnings == []
+
+
+class _FixedFlightProvider(StubFlightProvider):
+    """Returns a fixed one-way/round-trip fare so the orchestrator's math
+    can be checked exactly."""
+
+    async def search(self, origin_airport, dest_airport, depart, prefs,
+                     return_date=None):
+        amount = 200.0 if return_date else 100.0
+        return [FlightQuote(amount, QuoteConfidence.ESTIMATED, "fixed",
+                            "Fixed Air 1, nonstop")]
+
+
+async def test_roundtrip_does_not_double_flight_leg():
+    providers = _providers()
+    providers["flights"] = _FixedFlightProvider()
+    plan = await plan_trip(_req(), **providers)  # _req has a return_date
+    fly_options = [o for o in plan.options if o.mode == TravelMode.FLY]
+    assert fly_options
+    for option in fly_options:
+        flight_legs = [l for l in option.legs if l.label.startswith("Flight ")]
+        assert len(flight_legs) == 1
+        # provider already priced the round trip: orchestrator must not 2x it
+        assert flight_legs[0].amount_usd == 200.0
+    assert not any("2x one-way" in w
+                   for o in plan.options for w in o.warnings)
+
+
+async def test_oneway_leaves_amounts_undoubled():
+    providers = _providers()
+    providers["flights"] = _FixedFlightProvider()
+    plan = await plan_trip(_req(return_date=None), **providers)
+    fly_options = [o for o in plan.options if o.mode == TravelMode.FLY]
+    assert fly_options
+    for option in fly_options:
+        flight_legs = [l for l in option.legs if l.label.startswith("Flight ")]
+        assert flight_legs[0].amount_usd == 100.0
