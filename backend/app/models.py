@@ -66,6 +66,7 @@ class TripPlan(BaseModel):
 
 
 class JobStatus(str, Enum):
+    PENDING = "pending"  # accepted, worker hasn't picked it up yet
     RUNNING = "running"
     COMPLETE = "complete"
     FAILED = "failed"

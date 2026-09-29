@@ -14,7 +14,9 @@ class Settings(BaseSettings):
     # Real provider keys are optional: without them the app runs on stubs.
     duffel_api_key: str | None = None
     # Wired in Phase 1b (docker-compose already provides these services).
-    database_url: str | None = None
+    # Postgres in compose/prod; SQLite file when unset so `uvicorn` works
+    # with zero infrastructure. Same SQLAlchemy code path either way.
+    database_url: str = "sqlite+aiosqlite:///./fare_enough.db"
     redis_url: str | None = None
 
     # Pricing heuristics (used by estimate providers; override per deploy).

@@ -1,12 +1,24 @@
 """App entrypoint — assembles the service (ARCHITECTURE.md file tour)."""
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.trips import router as trips_router
 from app.config import settings
+from app.db import init_db
 
-app = FastAPI(title=settings.app_name)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Create the jobs table if missing, then serve. See app/db/store.py
+    # for why this is create_all and not Alembic at this stage.
+    await init_db()
+    yield
+
+
+app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
 # Web UI runs on :5173 in dev; tighten this list in prod.
 app.add_middleware(

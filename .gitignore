@@ -16,6 +16,9 @@ dist-ssr/
 .env
 .env.*
 
+# Local dev databases
+*.db
+
 # Python packaging
 *.egg-info/
 

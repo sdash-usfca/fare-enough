@@ -57,8 +57,11 @@ is the planned upgrade.)
 **Why:** pricing every branch of the option tree takes 10–30 seconds of
 fan-out calls. Holding an HTTP connection open that long is fragile; a job
 model is resumable, pollable, and matches how the UI wants to render
-("results appearing as they're computed"). Phase 1 keeps jobs in memory with
-a comment marking where Redis takes over.
+("results appearing as they're computed"). Phase 1b persists jobs in
+Postgres (SQLite for zero-infra local dev) via `app/db/store.py` — a restart
+no longer loses in-flight searches, and the `pending → running → complete |
+failed` lifecycle is ready for a separate worker pool later. (SSE streaming
+of partial results is the planned upgrade.)
 
 ## 6. Fan-out with graceful degradation
 
@@ -70,11 +73,18 @@ whole trip.
 you still see flight options. Each option lists which legs are missing so the
 user knows what the total excludes.
 
-## 7. Postgres + Redis (in compose, wired in Phase 1b)
+## 7. Postgres for jobs, Redis for cache (wired in Phase 1b)
 
-**Why:** trips, users, and saved searches are relational (Postgres). Flight
-prices are volatile and fetched under rate limits — they want a TTL cache,
-which is Redis's job. Both run in `docker-compose.yml` today so the dev
+**Why:** trips, users, and saved searches are relational (Postgres) — jobs
+are the system of record and must survive restarts, so they live in a
+`jobs` table, never in a TTL store. Flight prices are volatile and fetched
+under rate limits — they want a TTL cache, which is Redis's job. Phase 1b
+wires both: `app/db/store.py` persists every job (Postgres in compose, a
+SQLite file for zero-infra local dev), and `app/core/cache.py` caches
+provider results — OSRM routes (7-day TTL) and geocodes (30-day TTL, keeping
+us polite to Nominatim's ~1 req/s policy). Redis is optional at runtime: no
+`REDIS_URL` means an in-memory cache, and a dead Redis degrades to misses,
+never to broken requests. Both run in `docker-compose.yml` so the dev
 environment matches prod.
 
 ## 8. One API, many frontends
@@ -120,6 +130,9 @@ is why the Redis fare cache (Phase 1b) matters before going live.
 | `backend/app/config.py` | Settings from env vars | 12-factor config; secrets never in code |
 | `backend/app/models.py` | Pydantic request/response schemas | API contract, shared by backend and (later) generated clients |
 | `backend/app/api/trips.py` | `POST /trips`, `GET /trips/{id}` | Job-model endpoints (decision 5) |
+| `backend/app/db/store.py` | `JobStore`: Postgres/SQLite job persistence | Decision 7 — the jobs table is the system of record |
+| `backend/app/core/cache.py` | Redis (or in-memory) provider-result cache | Decision 7 — OSRM routes + geocodes, never jobs |
+| `backend/app/providers/cached.py` | Cache decorators for driving/geocoding | Keeps Nominatim polite and OSRM fast |
 | `backend/app/core/orchestrator.py` | Builds the option tree, fans out, ranks | The product's brain — decision 2 and 6 live here |
 | `backend/app/providers/base.py` | Provider ABCs + `Quote` | Decision 3 and 4 |
 | `backend/app/providers/duffel.py` | Live flight prices (Duffel) | First real provider; active when `DUFFEL_API_KEY` is set |

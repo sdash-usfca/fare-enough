@@ -8,7 +8,8 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql://fareenough:fareenough@db:5432/fareenough
+      # asyncpg scheme: SQLAlchemy's async engine needs an explicit driver.
+      - DATABASE_URL=postgresql+asyncpg://fareenough:fareenough@db:5432/fareenough
       - REDIS_URL=redis://redis:6379/0
     depends_on:
       - db
