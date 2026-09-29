@@ -154,13 +154,20 @@ async def _price_drive_option(
 ) -> TripOption | None:
     route = await driving.route(req.origin, req.destination_city)
     miles = route.miles * (2 if _roundtrip(req) else 1)
+    # Label shows one-way distance/hours honestly; round-trip totals stay in
+    # parens so "each way" never mixes with a round-trip number.
+    if _roundtrip(req):
+        drive_label = (f"Drive {route.miles:.0f} mi each way "
+                       f"({miles:.0f} mi round trip, {route.hours:.1f}h each way)")
+    else:
+        drive_label = f"Drive {route.miles:.0f} mi ({route.hours:.1f}h one way)"
     # STUB state detection; real impl reverse-geocodes the origin.
     state = "WA" if "wa" in req.origin.lower() or "seattle" in req.origin.lower() else "CA"
     gas = await fuel.price_per_gallon(state)
     fuel_cost = round(miles / req.mpg * gas.amount_usd, 2)
 
     legs = [
-        LegQuote(label=f"Drive {miles:.0f} mi ({route.hours:.1f}h each way)",
+        LegQuote(label=drive_label,
                  amount_usd=0, confidence=route.confidence, source=route.source,
                  detail="distance/time only — no cost"),
         LegQuote(label=f"Fuel: {miles:.0f} mi / {req.mpg} mpg @ ${gas.amount_usd:.2f}/gal",
