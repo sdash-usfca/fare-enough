@@ -1,3 +1,30 @@
+# Phase 2c notes — frontend: fuel-price input on the trip form
+
+## What changed
+- `frontend/src/App.jsx`: optional "Fuel price ($/gal)" number input
+  (`min 0.01, max 30`, placeholder `e.g. 4.29`).
+- Blank (or non-numeric) → the key is omitted from `POST /trips`, so the
+  backend falls back to EIA/estimate exactly as before. Typed → parsed to
+  float and sent as `fuel_price_per_gal`, which tops the fuel chain via
+  `UserFuelProvider`.
+- No result-display changes needed: the fuel leg already renders
+  `[confidence · source]`, so an override shows up as `[USER · user]` with
+  "price you entered: $X.XX/gal".
+- `vite build` passes.
+
+## Decisions
+- Omit-on-blank, don't send `null`: keeps the "empty = existing fallback
+  behavior" contract from Phase 2c — the backend never sees a difference
+  between "no frontend" and "frontend left it blank".
+- Client-side `min`/`max` mirrors the backend's `0 < price ≤ 30`; the
+  backend validation remains the real guard.
+
+## What's next
+- EIA remains a keyed optional upgrade if she ever wants it.
+- Duffel fare cache with TTL before live flight pricing (ARCHITECTURE.md #10).
+
+---
+
 # Phase 2c notes — traveler fuel-price override
 
 ## What changed

@@ -11,6 +11,7 @@ export default function App() {
     return_date: '2026-10-19',
     mode: 'either',
     own_car: true,
+    fuel_price_per_gal: '',
   });
   const [plan, setPlan] = useState(null);
   const [status, setStatus] = useState('idle');
@@ -21,10 +22,19 @@ export default function App() {
   async function search() {
     setStatus('searching');
     setPlan(null);
+    // Optional override: blank (or non-numeric) means "no override" — the key
+    // is omitted so the backend falls back to EIA/estimate.
+    const payload = { ...form };
+    const price = parseFloat(form.fuel_price_per_gal);
+    if (form.fuel_price_per_gal === '' || Number.isNaN(price)) {
+      delete payload.fuel_price_per_gal;
+    } else {
+      payload.fuel_price_per_gal = price;
+    }
     const res = await fetch(`${API}/trips`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
+      body: JSON.stringify(payload),
     });
     const { job_id } = await res.json();
     // Poll until the engine finishes pricing every branch.
@@ -61,6 +71,14 @@ export default function App() {
           </select>
         </label>
         <label><input type="checkbox" checked={form.own_car} onChange={set('own_car')} /> I have my own car</label>
+        <label>Fuel price ($/gal){' '}
+          <input
+            type="number" min="0.01" max="30" step="0.01" placeholder="e.g. 4.29"
+            value={form.fuel_price_per_gal} onChange={set('fuel_price_per_gal')}
+            style={{ width: '100%' }}
+          />
+          <small style={{ color: '#666' }}>Optional — leave blank to use the estimate.</small>
+        </label>
         <button onClick={search} disabled={status === 'searching'}>
           {status === 'searching' ? 'Pricing every option…' : 'Find the cheapest way'}
         </button>
