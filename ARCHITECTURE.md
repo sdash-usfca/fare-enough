@@ -59,9 +59,12 @@ fan-out calls. Holding an HTTP connection open that long is fragile; a job
 model is resumable, pollable, and matches how the UI wants to render
 ("results appearing as they're computed"). Phase 1b persists jobs in
 Postgres (SQLite for zero-infra local dev) via `app/db/store.py` — a restart
-no longer loses in-flight searches, and the `pending → running → complete |
-failed` lifecycle is ready for a separate worker pool later. (SSE streaming
-of partial results is the planned upgrade.)
+no longer loses in-flight searches. Phase 2f completed the model: the API
+only enqueues (`POST /trips` → pending row, no in-process execution) and a
+separate worker pool (`app/worker.py`, `python -m app.worker`, compose
+`worker` service) claims pending jobs atomically and prices them, so workers
+scale independently of the API. (SSE streaming of partial results is the
+planned upgrade.)
 
 ## 6. Fan-out with graceful degradation
 
@@ -222,5 +225,6 @@ infrastructure. Constraints made the design better."
 | `backend/app/providers/eia.py` | Live fuel prices (EIA) + fallback | Second real provider; active when `EIA_API_KEY` is set (decision 12) |
 | `backend/app/providers/user.py` | Traveler-supplied fuel price | Top of the fuel chain when `fuel_price_per_gal` is set (decision 13) |
 | `backend/app/providers/*.py` | Stub/real price sources | One file per source; swap without touching the engine |
-| `backend/app/data/airports.py` | Metro → airports mapping | Nearby-airport logic needs curated data, not an API || `docker-compose.yml` | api + postgres + redis | Dev matches prod (decision 7) |
+| `backend/app/data/airports.py` | Metro → airports mapping | Nearby-airport logic needs curated data, not an API || `backend/app/worker.py` | Worker pool: claims pending jobs, prices them | The execution half of the job model — decision 5 |
+| `docker-compose.yml` | api + worker + postgres + redis | Dev matches prod (decision 7); scale workers with `--scale worker=N` |
 | `frontend/` | Vite + React UI | Thin client over the API (decision 8) |

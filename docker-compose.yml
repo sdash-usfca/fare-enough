@@ -1,6 +1,7 @@
 # Dev matches prod: API + Postgres + Redis in one command.
 # Phase 1: the API runs against stub providers, so no API keys are needed.
 # Phase 1b: wire DATABASE_URL / REDIS_URL from these services into the app.
+# Phase 2f: the worker prices trips; scale it with --scale worker=N.
 
 services:
   api:
@@ -15,6 +16,19 @@ services:
       - db
       - redis
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # Job execution lives here, not in the API: POST /trips only enqueues,
+  # workers claim pending rows atomically (never double-run). One for dev;
+  # `docker compose up --scale worker=3` when the queue grows.
+  worker:
+    build: ./backend
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://fareenough:fareenough@db:5432/fareenough
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+    command: python -m app.worker
 
   db:
     image: postgres:16

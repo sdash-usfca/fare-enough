@@ -11,9 +11,9 @@ background boundary.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -119,6 +119,58 @@ class JobStore:
                 select(JobRow).order_by(JobRow.created_at.desc()).limit(limit)
             )).scalars().all()
             return [_to_recent_trip(r) for r in rows]
+
+    async def claim_oldest_pending(self) -> tuple[str, TripRequest] | None:
+        """Atomically move the oldest pending job to running.
+
+        The conditional UPDATE (status='pending' in the WHERE clause) is the
+        whole concurrency story: N workers can race, but only the winner's
+        rowcount is 1 — losers get 0 and move on. Portable, unlike
+        FOR UPDATE SKIP LOCKED, so SQLite and Postgres share the code path.
+        """
+        async with self._sessions() as s:
+            row = (await s.execute(
+                select(JobRow)
+                .where(JobRow.status == JobStatus.PENDING.value)
+                .order_by(JobRow.created_at)
+                .limit(1)
+            )).scalars().first()
+            if row is None:
+                return None
+            job_id, req = row.job_id, TripRequest(**row.request_json)
+            updated = await s.execute(
+                update(JobRow)
+                .where(JobRow.job_id == job_id,
+                       JobRow.status == JobStatus.PENDING.value)
+                .values(status=JobStatus.RUNNING.value,
+                        updated_at=datetime.now(timezone.utc))
+            )
+            await s.commit()
+            if (updated.rowcount or 0) != 1:
+                return None  # lost the race to another worker
+            log.info("job %s claimed by worker", job_id)
+            return job_id, req
+
+    async def reset_stuck_running(self, older_than_s: int) -> int:
+        """Requeue jobs stuck in running — their worker died mid-pricing.
+
+        Called once at worker startup. Without it, a crash would leave jobs
+        in running forever: invisible to claim_oldest_pending, never retried.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=older_than_s)
+        async with self._sessions() as s:
+            updated = await s.execute(
+                update(JobRow)
+                .where(JobRow.status == JobStatus.RUNNING.value,
+                       JobRow.updated_at < cutoff)
+                .values(status=JobStatus.PENDING.value,
+                        updated_at=datetime.now(timezone.utc))
+            )
+            await s.commit()
+            n = updated.rowcount or 0
+            if n:
+                log.warning("requeued %d stuck running job(s)", n)
+            return n
 
     async def close(self) -> None:
         await self._engine.dispose()

@@ -3,14 +3,21 @@
 The app's real _providers() hits the network (Nominatim/OSRM), so these
 tests swap in the stub stack. The JobStore points at a per-test SQLite file,
 so no Postgres is needed and tests stay hermetic.
+
+Since Phase 2f the API only enqueues — workers price jobs — so the tests
+drive the worker inline (see _wait_for): each poll lets the worker claim
+and price one job before checking status.
 """
 
-import time
+import asyncio
 
 import pytest
 from fastapi.testclient import TestClient
 
 import app.api.trips as trips_mod
+from app import worker as worker_mod
+from app.core import orchestrator as orch_mod
+from app.db import get_job_store
 from app.db.store import configure_job_store
 from app.main import app
 from app.providers.geo import StubGeocoder
@@ -54,12 +61,18 @@ def client(tmp_path, monkeypatch):
 
 
 def _wait_for(client, job_id, want="complete", tries=100):
-    for _ in range(tries):
-        body = client.get(f"/trips/{job_id}").json()
-        if body["status"] == want:
-            return body
-        time.sleep(0.05)
-    raise AssertionError(f"job {job_id} never reached {want}: {body}")
+    async def _poll():
+        store = get_job_store()
+        for _ in range(tries):
+            body = client.get(f"/trips/{job_id}").json()
+            if body["status"] == want:
+                return body
+            # The API only enqueues — act as the worker for one iteration.
+            await worker_mod.run_once(store)
+            await asyncio.sleep(0.01)
+        raise AssertionError(f"job {job_id} never reached {want}: {body}")
+
+    return asyncio.run(_poll())
 
 
 def test_post_returns_202_with_job_id(client):
@@ -93,7 +106,7 @@ def test_failed_job_reports_error(client, monkeypatch):
     async def _boom(*args, **kwargs):
         raise RuntimeError("provider meltdown")
 
-    monkeypatch.setattr(trips_mod, "plan_trip", _boom)
+    monkeypatch.setattr(orch_mod, "plan_trip", _boom)
     job_id = client.post("/trips", json=BODY).json()["job_id"]
     failed = _wait_for(client, job_id, want="failed")
     assert failed["error"] == "provider meltdown"

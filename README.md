@@ -14,6 +14,7 @@ cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 uvicorn app.main:app --reload          # API on http://localhost:8000
+python -m app.worker                   # worker, in a second terminal: prices jobs
 
 # Frontend
 cd frontend
@@ -27,7 +28,7 @@ curl -X POST http://localhost:8000/trips \
   -H 'Content-Type: application/json' \
   -d '{"origin":"Auburn, WA 98092","destination_city":"Los Angeles",
        "depart_date":"2026-10-16","return_date":"2026-10-19","mode":"either"}'
-# → 202 {"job_id":"...","status":"running"}
+# → 202 {"job_id":"...","status":"pending"}  (the worker picks it up)
 curl http://localhost:8000/trips/<job_id>   # poll until "complete"
 ```
 

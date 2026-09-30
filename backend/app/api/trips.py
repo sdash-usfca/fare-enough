@@ -1,6 +1,6 @@
 """Trip endpoints — the job model (ARCHITECTURE.md decision 5).
 
-POST /trips → 202 + job_id (search runs in the background)
+POST /trips → 202 + job_id (a worker prices it in the background)
 GET  /trips/{job_id} → status + ranked plan when complete
 
 Jobs persist in the JobStore (Postgres in compose/prod, SQLite for
@@ -12,11 +12,10 @@ in-memory fallback — see app/core/cache.py for the what and why.
 import logging
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 
 from app.config import settings
 from app.core.cache import build_cache
-from app.core.orchestrator import plan_trip
 from app.db import get_job_store
 from app.models import RecentTrip, TripJob, TripRequest
 from app.providers.base import FuelPriceProvider
@@ -110,22 +109,12 @@ def _providers(req: TripRequest):
     }
 
 
-async def _run_job(job_id: str, req: TripRequest) -> None:
-    store = get_job_store()
-    await store.mark_running(job_id)
-    try:
-        plan = await plan_trip(req, **_providers(req))
-        await store.mark_complete(job_id, plan)
-    except Exception as exc:  # noqa: BLE001 — surfaced to the client as failed
-        await store.mark_failed(job_id, str(exc))
-
-
 @router.post("", status_code=202, response_model=TripJob)
-async def create_trip(req: TripRequest, background: BackgroundTasks) -> TripJob:
+async def create_trip(req: TripRequest) -> TripJob:
+    # Enqueue only — a worker (app/worker.py) claims and prices the job.
+    # The API never executes pricing itself, so it stays a thin edge.
     job_id = uuid.uuid4().hex[:12]
-    job = await get_job_store().create_job(job_id, req)
-    background.add_task(_run_job, job_id, req)
-    return job
+    return await get_job_store().create_job(job_id, req)
 
 
 @router.get("/recent", response_model=list[RecentTrip])

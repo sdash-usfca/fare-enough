@@ -1,3 +1,45 @@
+# Phase 2f notes — separate worker pool for jobs
+
+## What changed
+- `db/store.py`: `claim_oldest_pending()` (atomic: SELECT oldest pending +
+  conditional UPDATE, losers get rowcount 0 — portable, no FOR UPDATE SKIP
+  LOCKED) and `reset_stuck_running()` (requeues jobs orphaned by a crashed
+  worker).
+- New `app/worker.py`: `run_once()` claims and prices one job (complete /
+  failed with error); `run_forever()` loops with burst mode (re-poll
+  immediately after work) and a 2s idle cadence; SIGTERM/SIGINT shuts down
+  gracefully. Entry point: `python -m app.worker`.
+- `api/trips.py`: `POST /trips` is now enqueue-only — no `BackgroundTasks`,
+  no in-process pricing. The API is a thin edge; workers do the work.
+- `docker-compose.yml`: new `worker` service (`python -m app.worker`);
+  scale with `docker compose up --scale worker=3`.
+- `README.md`: quickstart now runs the worker in a second terminal.
+- 84 tests green (80 + 4 new worker tests); smoke-tested across two real
+  processes (API enqueues → pending; worker claims → prices → marks done).
+
+## Decisions
+
+### 1. No in-process fallback — the API never prices
+Keeping BackgroundTasks as a fallback would mean two execution paths and a
+double-run hazard. One path is honest: if no worker runs, jobs sit pending
+and the UI shows it. Dev runs `python -m app.worker` next to uvicorn;
+compose runs the worker service.
+
+### 2. Atomic claim via conditional UPDATE, not SELECT FOR UPDATE
+`UPDATE jobs SET status='running' WHERE job_id=? AND status='pending'`
+makes the race safe on both SQLite and Postgres. `SKIP LOCKED` would be
+Postgres-only; the store's whole point is one code path for both.
+
+### 3. Stuck-job reaping at startup, not a separate reaper
+A crashed worker leaves `running` rows nobody will touch. Resetting them to
+pending once at startup (older than 10 min) is enough at this scale — no
+background sweeper process to operate.
+
+## What's next
+- EIA live verification still parked (needs her explicit go-ahead).
+- SSE streaming of partial results (the planned upgrade in decision 5).
+- Rental-car live API when a self-serve option exists.
+
 # Phase 2e notes — GET /trips/recent operator view
 
 ## What changed
