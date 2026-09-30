@@ -1,3 +1,38 @@
+# Phase 2b notes — real fuel prices via EIA
+
+## What changed
+New `backend/app/providers/eia.py`: `EIAFuelProvider` queries the EIA weekly
+retail gasoline survey (`api.eia.gov/v2/petroleum/pri/gnd/data/`,
+`duoarea=S{STATE}`, latest week only) and maps it to a `MoneyQuote` with
+`confidence=LIVE`, `source="eia"`. Wired in `api/trips.py::_providers()`:
+`EIA_API_KEY` set → `FallbackFuelProvider([EIA, stub])`; unset → stub as
+before. `eia_api_key` added to `backend/app/config.py`. 66 tests green
+(59 pre-existing + 7 new, all on `httpx.MockTransport` — no network, no key).
+
+## Decisions
+
+### 1. EIA because the key actually exists
+Free, instant, no partnership — the opposite of the rental-car situation
+(Phase 2a). One endpoint covers all 50 states; ~9k req/hr means no cache
+needed at this call volume (1–2 calls per trip).
+
+### 2. Two honest limitations, labeled in the quote
+- Weekly data can lag the pump ~7 days → the detail names the survey week.
+- `EPM0` is the all-grades average, not regular → the detail says "all
+  grades" instead of keeping the stub's "regular" label.
+
+### 3. Same fallback shape as driving
+`FallbackFuelProvider` mirrors `FallbackDrivingProvider`: EIA first, the
+stub as a labeled-`ESTIMATED` safety net. A dead EIA degrades fuel legs, it
+never kills the drive options.
+
+## What's next
+- To go live: grab a free key at eia.gov/opendata/register.php and set
+  `EIA_API_KEY` in `backend/.env` (same move as the Duffel test key).
+- Rental cars stay estimated until partner credentials exist (Phase 2a).
+
+---
+
 # Phase 2a notes — rental-car provider: researched, honestly deferred
 
 ## What changed

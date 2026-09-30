@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     app_name: str = "fare-enough"
     # Real provider keys are optional: without them the app runs on stubs.
     duffel_api_key: str | None = None
+    # Free at https://www.eia.gov/opendata/register.php (emailed instantly).
+    # Without it, fuel stays on the labeled stub estimate.
+    eia_api_key: str | None = None
     # Wired in Phase 1b (docker-compose already provides these services).
     # Postgres in compose/prod; SQLite file when unset so `uvicorn` works
     # with zero infrastructure. Same SQLAlchemy code path either way.

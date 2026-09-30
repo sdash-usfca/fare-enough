@@ -149,7 +149,10 @@ class StubRentalCarProvider(RentalCarProvider):
 
 
 class StubFuelProvider(FuelPriceProvider):
-    """STUB. Real impl: EIA weekly retail gasoline API by state."""
+    """STUB. Real impl: EIAFuelProvider in app/providers/eia.py — active
+    when EIA_API_KEY is set (free key at eia.gov/opendata/register.php).
+    Also serves as the labeled-ESTIMATED fallback inside
+    FallbackFuelProvider when EIA is unreachable."""
 
     async def price_per_gallon(self, state: str) -> MoneyQuote:
         price = _GAS_PRICE.get(state.upper(), 3.80)

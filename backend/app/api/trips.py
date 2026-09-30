@@ -21,6 +21,7 @@ from app.db import get_job_store
 from app.models import TripJob, TripRequest
 from app.providers.cached import CachedDrivingProvider, CachedGeocoder
 from app.providers.duffel import DuffelFlightProvider
+from app.providers.eia import EIAFuelProvider, FallbackFuelProvider
 from app.providers.geo import FallbackGeocoder, NominatimGeocoder, StubGeocoder
 from app.providers.osrm import FallbackDrivingProvider, OSRMDrivingProvider
 from app.providers.stubs import (
@@ -71,7 +72,15 @@ def _providers():
         ),
         "ground": HeuristicGroundProvider(),
         "rental": StubRentalCarProvider(),
-        "fuel": StubFuelProvider(),
+        # EIA takes over fuel the moment EIA_API_KEY is set; the stub
+        # survives inside the fallback as a labeled ESTIMATED safety net,
+        # same Chain of Responsibility as the driving providers above.
+        "fuel": (
+            FallbackFuelProvider(
+                [EIAFuelProvider(settings.eia_api_key), StubFuelProvider()])
+            if settings.eia_api_key
+            else StubFuelProvider()
+        ),
         "geocoder": geocoder,
     }
 

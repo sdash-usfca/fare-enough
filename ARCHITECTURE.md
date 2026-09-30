@@ -144,6 +144,36 @@ surfaced to the UI exactly like every other estimate.
 API, and chose an honest labeled estimate over an unverifiable integration.
 The seam for the real provider is already in the codebase."
 
+## 12. EIA for live fuel prices
+
+**Decision:** the second real provider is the EIA (U.S. Energy Information
+Administration) weekly retail gasoline API, in `backend/app/providers/eia.py`.
+
+**Why:** unlike rental cars, this data source actually exists for developers:
+a free key (emailed instantly, no partnership), ~9,000 req/hr, one endpoint
+covering every state (`petroleum/pri/gnd`, `duoarea=S{STATE}`). It's the
+federal weekly pump-price survey, so it's the closest thing to ground truth
+for "what does gas cost in California this week." The adapter follows the
+Duffel pattern exactly — credential-gated in the one factory
+(`api/trips.py::_providers()` sets `EIA_API_KEY` → live), injectable
+`httpx.AsyncClient` so tests run on `MockTransport` with no network.
+
+**Tradeoffs (documented in the module docstring, not hidden):**
+- Weekly granularity: the price can lag the pump by up to ~7 days, longer
+  across holiday weeks. The quote detail names the survey week
+  ("week of 2026-09-21") so the staleness is visible, not silent.
+- The dataset's gasoline series (`EPM0`) is the all-grades average, not
+  regular-grade specifically — the detail says "all grades" instead of
+  inheriting the stub's "regular" label. Close enough for trip math, but
+  labeled for what it is.
+- Failure mode is the same Chain of Responsibility as driving (decision 6):
+  `FallbackFuelProvider([EIA, stub])` — EIA hiccups degrade to the labeled
+  `ESTIMATED` stub instead of killing both drive options.
+
+**Interview line:** "I picked the data source a developer can actually get —
+free government API, no partnership — and labeled its two honest limitations
+right in the quote instead of rounding them away."
+
 ## File tour
 
 | Path | What it is | Why it exists |
@@ -158,6 +188,7 @@ The seam for the real provider is already in the codebase."
 | `backend/app/core/orchestrator.py` | Builds the option tree, fans out, ranks | The product's brain — decision 2 and 6 live here |
 | `backend/app/providers/base.py` | Provider ABCs + `Quote` | Decision 3 and 4 |
 | `backend/app/providers/duffel.py` | Live flight prices (Duffel) | First real provider; active when `DUFFEL_API_KEY` is set |
+| `backend/app/providers/eia.py` | Live fuel prices (EIA) + fallback | Second real provider; active when `EIA_API_KEY` is set (decision 12) |
 | `backend/app/providers/*.py` | Stub/real price sources | One file per source; swap without touching the engine |
 | `backend/app/data/airports.py` | Metro → airports mapping | Nearby-airport logic needs curated data, not an API || `docker-compose.yml` | api + postgres + redis | Dev matches prod (decision 7) |
 | `frontend/` | Vite + React UI | Thin client over the API (decision 8) |
