@@ -122,6 +122,28 @@ the orchestrator untouched — the payoff of decision 3.
 airline sells directly, and offer requests cost per call in live mode, which
 is why the Redis fare cache (Phase 1b) matters before going live.
 
+## 11. No live rental-car prices — researched, not skipped
+
+**Decision:** the rental-car leg stays an honestly-labeled `ESTIMATED` quote;
+no live provider is wired.
+
+**Why:** there is no Duffel-equivalent for rental cars. Amadeus shut down its
+entire self-service developer portal in July 2026 (enterprise contracts
+only), and every remaining car-search API — Avis/Budget's dev suite, the
+Discover Cars affiliate API, CarTrawler, BCD Travel — requires a business
+partnership, not a signup. A portfolio project cannot conjure partner
+credentials, and shipping an *untested* integration against one of those APIs
+would be fake progress: it would look live while never having returned a
+real price. So the `RentalCarProvider` interface (decision 3) stands ready —
+a partner-backed provider slots into the one factory in
+`api/trips.py::_providers()` the day credentials exist — and until then the
+leg is priced by the stub with `confidence=ESTIMATED` and `source="stub-rental"`,
+surfaced to the UI exactly like every other estimate.
+
+**Interview line:** "I researched the supplier landscape, found no self-serve
+API, and chose an honest labeled estimate over an unverifiable integration.
+The seam for the real provider is already in the codebase."
+
 ## File tour
 
 | Path | What it is | Why it exists |

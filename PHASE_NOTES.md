@@ -1,3 +1,33 @@
+# Phase 2a notes — rental-car provider: researched, honestly deferred
+
+## What changed
+Almost no code — one docstring in `backend/app/providers/stubs.py` and a new
+ARCHITECTURE.md decision (#11). The `StubRentalCarProvider` stays the active
+rental-car source, still `ESTIMATED` / `source="stub-rental"`.
+
+## Why so little code
+The research came back negative, and negative results are still results:
+- Amadeus for Developers (the original "real impl" named in the stub
+  docstring) **shut down its self-service portal in July 2026** — enterprise
+  contracts only, no signup path. The old docstring was factually wrong; fixed.
+- Every other car-search API (Avis/Budget dev suite, Discover Cars affiliate
+  API, CarTrawler, BCD Travel) requires a business partnership.
+- There is no free, key-based, verifiable rental-car price API — unlike
+  flights (Duffel test mode) or routes (OSRM).
+
+Options were: (a) ship an untested integration against a partner API with no
+credentials to verify it, or (b) keep the labeled estimate and document the
+landscape. (a) is fake progress — it would look live without ever returning
+a real price — so (b) won. The provider interface is the deliverable: when
+partner credentials exist, the live class slots into the single factory in
+`api/trips.py::_providers()` with zero engine changes.
+
+## What's next
+- Phase 2b: real fuel prices via the EIA weekly retail gasoline API (free key,
+  unlike rental cars — the API actually exists).
+
+---
+
 # Phase 1b notes — Postgres-backed jobs + Redis provider cache
 
 ## What changed

@@ -133,7 +133,13 @@ class HeuristicGroundProvider(GroundTransportProvider):
 
 
 class StubRentalCarProvider(RentalCarProvider):
-    """STUB. Real impl: Amadeus rental-car search API."""
+    """STUB — and deliberately so. There is no self-serve rental-car search
+    API: Amadeus shut down its self-service portal (July 2026), and every
+    remaining source (Avis/Budget dev suite, Discover Cars affiliate API,
+    CarTrawler, BCD Travel) requires a business partnership, not a signup.
+    See ARCHITECTURE.md decision 11. If partner credentials ever arrive, the
+    live provider slots in at api/trips.py::_providers() with zero engine
+    changes — until then this stays an honestly-labeled ESTIMATED quote."""
 
     async def quote(self, days: int, pickup_airport: str) -> MoneyQuote:
         total = (settings.rental_car_daily_usd + settings.rental_insurance_daily_usd) * days
