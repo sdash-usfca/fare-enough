@@ -1,3 +1,42 @@
+# Phase 2c notes — traveler fuel-price override
+
+## What changed
+- `TripRequest.fuel_price_per_gal` (optional, `0 < price ≤ 30`).
+- New `backend/app/providers/user.py`: `UserFuelProvider` quotes the
+  traveler's price verbatim with the new `USER` confidence level.
+- `api/trips.py::_providers(req)` now takes the request; `_fuel_provider()`
+  builds the chain user → EIA (if keyed) → stub inside one
+  `FallbackFuelProvider`.
+- 74 tests green (66 pre-existing + 8 new).
+
+## Decisions
+
+### 1. The constraint became the design
+No .gov (her call), and third-party fuel APIs priced themselves out
+(Zyla $10k/yr, RapidAPI 10 req/mo free). But the traveler's pump price is
+more accurate than any state average anyway — EIA says what Washington
+averaged last week, she knows what Auburn Costco charged this morning.
+Zero keys, zero network, zero breakage.
+
+### 2. One price for the whole trip (documented simplification)
+Per-state prices would be over-engineering v1; most people fill up near
+home. Noted in the model field comment and decision 13.
+
+### 3. USER confidence, not LIVE
+`LIVE` means "priced from a real API just now." A typed-in price is
+neither — it gets its own level so the quote stays honest about origin.
+
+### 4. Bounds catch typos, not dishonesty
+`le=30` rejects $479 fat-fingers (US record is under $8); it doesn't try
+to police what she types for her own trip.
+
+## What's next
+- Frontend: surface a fuel-price input on the trip form (defaults empty →
+  estimate; typed → override).
+- EIA remains a keyed optional upgrade if she ever wants it.
+
+---
+
 # Phase 2b notes — real fuel prices via EIA
 
 ## What changed

@@ -174,6 +174,32 @@ Duffel pattern exactly — credential-gated in the one factory
 free government API, no partnership — and labeled its two honest limitations
 right in the quote instead of rounding them away."
 
+## 13. Traveler-supplied fuel price beats every average
+
+**Decision:** `TripRequest.fuel_price_per_gal` (optional) feeds a
+`UserFuelProvider` (`backend/app/providers/user.py`) that sits first in the
+fuel chain: user price → EIA (if keyed) → labeled-ESTIMATED stub.
+
+**Why:** this started as a constraint — no .gov, and third-party fuel APIs
+turned out to be $10k/year enterprise products (Zyla) or 10-req/month toys
+(RapidAPI) — but it's the better product decision anyway. EIA tells you what
+Washington averaged last week; the traveler knows what the Costco in Auburn
+charged this morning. The pump you actually use is the ground truth, and it
+needs no key, no network, and nothing that can break. New `USER` confidence
+level keeps it distinct from `LIVE` (API data) in the quote.
+
+**Tradeoffs (documented, not hidden):**
+- One price applies to the whole trip — a documented simplification. Most
+  people fill up near home; per-state prices would be over-engineering v1.
+- Trusts the traveler's input; pydantic bounds (`0 < price ≤ 30`) catch
+  $479 typos, not dishonesty — it's their own trip math.
+- The chain order means a stale user price silently beats a fresh EIA one.
+  Acceptable: if you bothered to type it, it's probably today's price.
+
+**Interview line:** "The best data source turned out to be the user — their
+actual pump price beats any state average, and it works with zero
+infrastructure. Constraints made the design better."
+
 ## File tour
 
 | Path | What it is | Why it exists |
@@ -189,6 +215,7 @@ right in the quote instead of rounding them away."
 | `backend/app/providers/base.py` | Provider ABCs + `Quote` | Decision 3 and 4 |
 | `backend/app/providers/duffel.py` | Live flight prices (Duffel) | First real provider; active when `DUFFEL_API_KEY` is set |
 | `backend/app/providers/eia.py` | Live fuel prices (EIA) + fallback | Second real provider; active when `EIA_API_KEY` is set (decision 12) |
+| `backend/app/providers/user.py` | Traveler-supplied fuel price | Top of the fuel chain when `fuel_price_per_gal` is set (decision 13) |
 | `backend/app/providers/*.py` | Stub/real price sources | One file per source; swap without touching the engine |
 | `backend/app/data/airports.py` | Metro → airports mapping | Nearby-airport logic needs curated data, not an API || `docker-compose.yml` | api + postgres + redis | Dev matches prod (decision 7) |
 | `frontend/` | Vite + React UI | Thin client over the API (decision 8) |

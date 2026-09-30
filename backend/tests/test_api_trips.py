@@ -32,7 +32,7 @@ BODY = {
 }
 
 
-def _stub_providers():
+def _stub_providers(req):
     return {
         "flights": StubFlightProvider(),
         "driving": FallbackDrivingProvider([StubDrivingProvider()]),

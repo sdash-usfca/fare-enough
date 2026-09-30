@@ -31,11 +31,20 @@ class TripRequest(BaseModel):
     flight_prefs: FlightPrefs = Field(default_factory=FlightPrefs)
     own_car: bool = True
     mpg: float = 28.0
+    # Optional price override: what the traveler actually pays per gallon.
+    # Beats every average (EIA included) because the pump you use is more
+    # accurate than a state survey. One price applies to the whole trip —
+    # most people fill up near home, and per-state prices would be
+    # over-engineering for v1. The le=30 bound catches $479 typos, not
+    # real prices (the US record is under $8).
+    fuel_price_per_gal: float | None = Field(
+        default=None, gt=0, le=30, examples=[4.79])
 
 
 class QuoteConfidence(str, Enum):
     LIVE = "live"  # priced from a real API just now
     SANDBOX = "sandbox"  # real API response, but test-mode data (not bookable)
+    USER = "user"  # supplied by the traveler — most accurate when fresh
     ESTIMATED = "estimated"  # heuristic / cached / stub
 
 

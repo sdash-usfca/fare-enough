@@ -19,6 +19,7 @@ from app.core.cache import build_cache
 from app.core.orchestrator import plan_trip
 from app.db import get_job_store
 from app.models import TripJob, TripRequest
+from app.providers.base import FuelPriceProvider
 from app.providers.cached import CachedDrivingProvider, CachedGeocoder
 from app.providers.duffel import DuffelFlightProvider
 from app.providers.eia import EIAFuelProvider, FallbackFuelProvider
@@ -31,6 +32,7 @@ from app.providers.stubs import (
     StubFuelProvider,
     StubRentalCarProvider,
 )
+from app.providers.user import UserFuelProvider
 
 log = logging.getLogger(__name__)
 
@@ -41,7 +43,25 @@ router = APIRouter(prefix="/trips", tags=["trips"])
 _cache = build_cache(settings.redis_url)
 
 
-def _providers():
+def _fuel_provider(req: TripRequest) -> FuelPriceProvider:
+    # Fuel chain, highest priority first. The traveler's own price beats
+    # any average (their pump > a state survey); EIA beats the stub; the
+    # stub keeps the lights on so fuel never kills the drive options.
+    providers: list[FuelPriceProvider] = []
+    if req.fuel_price_per_gal is not None:
+        log.info("fuel: user price $%.2f/gal", req.fuel_price_per_gal)
+        providers.append(UserFuelProvider(req.fuel_price_per_gal))
+    if settings.eia_api_key:
+        log.info("fuel: EIA (live prices)")
+        providers.append(EIAFuelProvider(settings.eia_api_key))
+    else:
+        log.info("fuel: stub (enter fuel_price_per_gal or set "
+                 "EIA_API_KEY for live prices)")
+    providers.append(StubFuelProvider())
+    return FallbackFuelProvider(providers)
+
+
+def _providers(req: TripRequest):
     # One place where concrete providers are chosen — swap stubs for real
     # implementations here without touching the orchestrator or routes.
     # Duffel takes over flights the moment DUFFEL_API_KEY is set; everything
@@ -72,15 +92,11 @@ def _providers():
         ),
         "ground": HeuristicGroundProvider(),
         "rental": StubRentalCarProvider(),
-        # EIA takes over fuel the moment EIA_API_KEY is set; the stub
-        # survives inside the fallback as a labeled ESTIMATED safety net,
-        # same Chain of Responsibility as the driving providers above.
-        "fuel": (
-            FallbackFuelProvider(
-                [EIAFuelProvider(settings.eia_api_key), StubFuelProvider()])
-            if settings.eia_api_key
-            else StubFuelProvider()
-        ),
+        # EIA takes over fuel the moment EIA_API_KEY is set; the traveler's
+        # own fuel_price_per_gal beats both; the stub survives inside the
+        # fallback as a labeled ESTIMATED safety net, same Chain of
+        # Responsibility as the driving providers above.
+        "fuel": _fuel_provider(req),
         "geocoder": geocoder,
     }
 
@@ -89,7 +105,7 @@ async def _run_job(job_id: str, req: TripRequest) -> None:
     store = get_job_store()
     await store.mark_running(job_id)
     try:
-        plan = await plan_trip(req, **_providers())
+        plan = await plan_trip(req, **_providers(req))
         await store.mark_complete(job_id, plan)
     except Exception as exc:  # noqa: BLE001 — surfaced to the client as failed
         await store.mark_failed(job_id, str(exc))
