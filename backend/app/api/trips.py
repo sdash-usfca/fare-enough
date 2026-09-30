@@ -12,13 +12,13 @@ in-memory fallback — see app/core/cache.py for the what and why.
 import logging
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 
 from app.config import settings
 from app.core.cache import build_cache
 from app.core.orchestrator import plan_trip
 from app.db import get_job_store
-from app.models import TripJob, TripRequest
+from app.models import RecentTrip, TripJob, TripRequest
 from app.providers.base import FuelPriceProvider
 from app.providers.cached import (
     CachedDrivingProvider,
@@ -126,6 +126,15 @@ async def create_trip(req: TripRequest, background: BackgroundTasks) -> TripJob:
     job = await get_job_store().create_job(job_id, req)
     background.add_task(_run_job, job_id, req)
     return job
+
+
+@router.get("/recent", response_model=list[RecentTrip])
+async def recent_trips(
+    limit: int = Query(default=20, ge=1, le=100),
+) -> list[RecentTrip]:
+    # Declared before /{job_id}: FastAPI matches in definition order, so
+    # this must come first or "recent" would be read as a job_id.
+    return await get_job_store().recent_detailed(limit=limit)
 
 
 @router.get("/{job_id}", response_model=TripJob)

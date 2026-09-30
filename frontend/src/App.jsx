@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 const API = 'http://localhost:8000';
 
@@ -15,6 +15,26 @@ export default function App() {
   });
   const [plan, setPlan] = useState(null);
   const [status, setStatus] = useState('idle');
+  const [recents, setRecents] = useState([]);
+
+  async function loadRecents() {
+    try {
+      setRecents(await (await fetch(`${API}/trips/recent`)).json());
+    } catch {
+      // Backend unreachable — the search form below still explains itself.
+    }
+  }
+
+  useEffect(() => { loadRecents(); }, []);
+
+  async function openRecent(job_id) {
+    const job = await (await fetch(`${API}/trips/${job_id}`)).json();
+    if (job.status === 'complete' && job.plan) {
+      setPlan(job.plan);
+      setStatus('done');
+      window.scrollTo({ top: 0 });
+    }
+  }
 
   const set = (k) => (e) =>
     setForm({ ...form, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value });
@@ -44,14 +64,17 @@ export default function App() {
       if (job.status === 'complete') {
         setPlan(job.plan);
         setStatus('done');
+        loadRecents();
         return;
       }
       if (job.status === 'failed') {
         setStatus('failed');
+        loadRecents();
         return;
       }
     }
     setStatus('timeout');
+    loadRecents();
   }
 
   return (
@@ -86,6 +109,34 @@ export default function App() {
 
       {status === 'searching' && <p>Pricing flights, rentals, rideshares…</p>}
       {status === 'failed' && <p>Something broke on the backend. Check the API logs.</p>}
+
+      {recents.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <h3 style={{ fontSize: '1rem', margin: '0 0 8px' }}>Recent searches</h3>
+          <div style={{ display: 'grid', gap: 6 }}>
+            {recents.map((r) => (
+              <button
+                key={r.job_id}
+                onClick={() => r.status === 'complete' && openRecent(r.job_id)}
+                disabled={r.status !== 'complete'}
+                title={r.status === 'complete' ? 'Load this plan' : `Job ${r.status}`}
+                style={{
+                  textAlign: 'left', padding: '8px 12px', borderRadius: 8,
+                  border: '1px solid #ccc', background: '#fff',
+                  cursor: r.status === 'complete' ? 'pointer' : 'default',
+                }}
+              >
+                <strong>{r.origin} → {r.destination_city}</strong>{' '}
+                <small style={{ color: '#666' }}>
+                  {r.depart_date}{r.return_date ? ` – ${r.return_date}` : ''} · {r.status}
+                  {r.cheapest_usd != null && <> · cheapest ${r.cheapest_usd.toFixed(2)}</>}
+                  {r.error && <> · {r.error.slice(0, 60)}</>}
+                </small>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {plan && (
         <div style={{ display: 'grid', gap: 12 }}>

@@ -3,7 +3,7 @@
 These Pydantic models are the shared language between backend and frontends.
 """
 
-from datetime import date
+from datetime import date, datetime
 from enum import Enum
 
 from pydantic import BaseModel, Field
@@ -85,4 +85,22 @@ class TripJob(BaseModel):
     job_id: str
     status: JobStatus
     plan: TripPlan | None = None
+    error: str | None = None
+
+
+class RecentTrip(BaseModel):
+    """One row of the operator view: what the trip was, and how it ended.
+
+    Built from the stored request (always present) plus the plan (when the
+    job completed) — the full plan stays behind GET /trips/{job_id} so this
+    listing stays light."""
+    job_id: str
+    status: JobStatus
+    created_at: datetime
+    origin: str
+    destination_city: str
+    depart_date: date
+    return_date: date | None = None
+    option_count: int = 0
+    cheapest_usd: float | None = None  # cheapest option, when complete
     error: str | None = None

@@ -1,3 +1,36 @@
+# Phase 2e notes — GET /trips/recent operator view
+
+## What changed
+- `models.py`: new `RecentTrip` (job_id, status, created_at, request
+  summary, option_count, cheapest_usd, error) — the full plan stays behind
+  `GET /trips/{job_id}` so the listing stays light.
+- `db/store.py`: `recent_detailed(limit)` builds it from the stored
+  request_json + plan_json.
+- `api/trips.py`: `GET /trips/recent?limit=` (default 20, max 100), declared
+  before `/{job_id}` so "recent" isn't swallowed as a job id.
+- `frontend/src/App.jsx`: "Recent searches" section — loads on mount,
+  refreshes after each search; clicking a completed row loads its plan.
+- 80 tests green (77 + 3 new: newest-first summaries, limit respected,
+  /recent not swallowed by /{job_id}); `vite build` passes.
+
+## Decisions
+
+### 1. A separate light model, not TripJob with extras
+TripJob is the job-lifecycle contract (polling). RecentTrip is a read model
+for the listing — request summary plus outcome, no plan payload. The
+listing stays fast and the polling contract stays untouched.
+
+### 2. Route order is the API contract
+FastAPI matches routes in definition order, so /recent must precede
+/{job_id}. Covered by an explicit regression test — this is exactly the
+kind of thing that breaks silently in a future reorder.
+
+## What's next
+- Separate worker pool consuming `pending` jobs (the lifecycle is ready).
+- EIA remains a keyed optional upgrade (her call — no .gov for now).
+
+---
+
 # Phase 2d notes — Duffel fare cache with TTL
 
 ## What changed

@@ -98,3 +98,40 @@ def test_failed_job_reports_error(client, monkeypatch):
     failed = _wait_for(client, job_id, want="failed")
     assert failed["error"] == "provider meltdown"
     assert failed["plan"] is None
+
+
+def test_recent_lists_newest_first_with_summaries(client):
+    id1 = client.post("/trips", json=BODY).json()["job_id"]
+    _wait_for(client, id1)
+    nyc = dict(BODY, destination_city="New York",
+               depart_date="2026-11-01", return_date="2026-11-04")
+    id2 = client.post("/trips", json=nyc).json()["job_id"]
+    _wait_for(client, id2)
+
+    r = client.get("/trips/recent")
+    assert r.status_code == 200
+    items = r.json()
+    assert [i["job_id"] for i in items] == [id2, id1]  # newest first
+    first = items[0]
+    assert first["origin"] == "Auburn, WA 98092"
+    assert first["destination_city"] == "New York"
+    assert first["depart_date"] == "2026-11-01"
+    assert first["status"] == "complete"
+    assert first["option_count"] > 0
+    assert first["cheapest_usd"] is not None
+    assert first["error"] is None
+
+
+def test_recent_limit_is_respected(client):
+    ids = [client.post("/trips", json=BODY).json()["job_id"] for _ in range(3)]
+    for jid in ids:
+        _wait_for(client, jid)
+    assert len(client.get("/trips/recent?limit=2").json()) == 2
+
+
+def test_recent_not_swallowed_by_job_id_route(client):
+    # /recent must be declared before /{job_id}; otherwise this 404s as
+    # "unknown job_id".
+    r = client.get("/trips/recent")
+    assert r.status_code == 200
+    assert isinstance(r.json(), list)

@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.config import settings
 from app.db.models import Base, JobRow
-from app.models import JobStatus, TripJob, TripPlan, TripRequest
+from app.models import JobStatus, RecentTrip, TripJob, TripPlan, TripRequest
 
 log = logging.getLogger(__name__)
 
@@ -111,6 +111,15 @@ class JobStore:
             )).scalars().all()
             return [_to_trip_job(r) for r in rows]
 
+    async def recent_detailed(self, limit: int = 20) -> list[RecentTrip]:
+        """Newest jobs first, each with its request summary and outcome —
+        what GET /trips/recent serves."""
+        async with self._sessions() as s:
+            rows = (await s.execute(
+                select(JobRow).order_by(JobRow.created_at.desc()).limit(limit)
+            )).scalars().all()
+            return [_to_recent_trip(r) for r in rows]
+
     async def close(self) -> None:
         await self._engine.dispose()
 
@@ -120,6 +129,24 @@ def _to_trip_job(row: JobRow) -> TripJob:
         job_id=row.job_id,
         status=JobStatus(row.status),
         plan=TripPlan(**row.plan_json) if row.plan_json else None,
+        error=row.error,
+    )
+
+
+def _to_recent_trip(row: JobRow) -> RecentTrip:
+    req = TripRequest(**row.request_json)
+    plan = TripPlan(**row.plan_json) if row.plan_json else None
+    return RecentTrip(
+        job_id=row.job_id,
+        status=JobStatus(row.status),
+        created_at=row.created_at,
+        origin=req.origin,
+        destination_city=req.destination_city,
+        depart_date=req.depart_date,
+        return_date=req.return_date,
+        option_count=len(plan.options) if plan else 0,
+        cheapest_usd=(plan.options[0].total_usd
+                      if plan and plan.options else None),
         error=row.error,
     )
 
