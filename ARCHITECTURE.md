@@ -120,7 +120,12 @@ the orchestrator untouched — the payoff of decision 3.
 
 **Tradeoff:** Duffel is a middleman — fares can differ slightly from what an
 airline sells directly, and offer requests cost per call in live mode, which
-is why the Redis fare cache (Phase 1b) matters before going live.
+is why the Redis fare cache matters before going live. Built 2026-09-30:
+`CachedFlightProvider` (`providers/cached.py`) wraps the Duffel provider
+only — the stub stays unwrapped — caching quote lists for `FARE_TTL_S`
+(4h, `core/cache.py`). The key covers airports, dates, and all of
+`FlightPrefs` including the client-side red-eye filter; only non-empty
+LIVE/SANDBOX results are cached, never estimates or empty offer lists.
 
 ## 11. No live rental-car prices — researched, not skipped
 

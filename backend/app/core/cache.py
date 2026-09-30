@@ -5,10 +5,14 @@ What gets cached and why:
   the drive branches, and road distances barely change — 7-day TTL.
 - Geocode results (place → lat/lon): Nominatim's usage policy asks for
   ~1 req/s politeness; coordinates effectively never change — 30-day TTL.
+- Duffel flight offers (airport pair + dates + prefs → quotes): each offer
+  request fans out to airlines (15s supplier timeout) and costs per call in
+  live mode — 4-hour TTL. Fares move intraday, so this is deliberately the
+  shortest TTL: fresh enough to trust, long enough that tweaking a trip and
+  re-searching doesn't re-pay the airline fan-out.
 
-What does NOT get cached: flight offers (volatile prices under rate limits —
-  that's the next cache to build, deliberately, when Duffel goes live) and
-  jobs (the system of record — Postgres, not a TTL store).
+What does NOT get cached: jobs (the system of record — Postgres, not a TTL
+store).
 
 If REDIS_URL is unset, everything falls back to a process-local MemoryCache
 so tests and stub-mode dev need no infrastructure. A dead Redis degrades to
@@ -24,6 +28,9 @@ log = logging.getLogger(__name__)
 
 ROUTE_TTL_S = 7 * 24 * 3600
 GEOCODE_TTL_S = 30 * 24 * 3600
+# Flight fares move intraday: shortest TTL of the three. Tunable — shorter
+# for live-mode thrift vs. freshness, longer for snappier repeat searches.
+FARE_TTL_S = 4 * 3600
 
 
 class Cache(Protocol):

@@ -4,12 +4,18 @@ The RedisCache failure mode (dead server → misses, never exceptions) is
 covered by build_cache's contract, not by a live server here.
 """
 
+from datetime import date
+
 from app.core.cache import MemoryCache, RedisCache, build_cache
-from app.models import QuoteConfidence
+from app.models import FlightPrefs, QuoteConfidence
 from app.providers.base import DrivingQuote
-from app.providers.cached import CachedDrivingProvider, CachedGeocoder
+from app.providers.cached import (
+    CachedDrivingProvider,
+    CachedFlightProvider,
+    CachedGeocoder,
+)
 from app.providers.geo import GeoPoint, StubGeocoder
-from app.providers.stubs import StubDrivingProvider
+from app.providers.stubs import StubDrivingProvider, StubFlightProvider
 
 
 async def test_memory_cache_hit_and_miss():
@@ -97,3 +103,77 @@ async def test_cached_geocoder_caches_hits_not_misses():
     assert await cached.geocode("Nowhere, XX 00000") is None
     assert await cached.geocode("Nowhere, XX 00000") is None
     assert inner.calls == 3
+
+
+class _CountingFlight(StubFlightProvider):
+    """Stub fares, but labeled LIVE so the cache keeps them."""
+
+    def __init__(self):
+        self.calls = 0
+
+    async def search(self, origin_airport, dest_airport, depart, prefs,
+                     return_date=None):
+        self.calls += 1
+        quotes = await super().search(
+            origin_airport, dest_airport, depart, prefs, return_date)
+        for q in quotes:
+            q.confidence = QuoteConfidence.LIVE
+            q.source = "duffel"
+        return quotes
+
+
+async def test_cached_flight_provider_caches_live_results():
+    inner = _CountingFlight()
+    cached = CachedFlightProvider(inner, MemoryCache(), ttl_s=60)
+    prefs = FlightPrefs()
+    depart, ret = date(2026, 10, 16), date(2026, 10, 19)
+    first = await cached.search("SEA", "LAX", depart, prefs, ret)
+    second = await cached.search("sea", "lax", depart, prefs, ret)
+    assert inner.calls == 1  # normalized key hits the same entry
+    assert [q.amount_usd for q in second] == [q.amount_usd for q in first]
+    assert all(q.confidence == QuoteConfidence.LIVE for q in second)
+    assert all(q.source == "duffel" for q in second)
+    # red_eye_ok is filtered client-side after the fetch → separate entry.
+    await cached.search("SEA", "LAX", depart, FlightPrefs(red_eye_ok=False), ret)
+    assert inner.calls == 2
+    # One-way vs round trip → separate entry.
+    await cached.search("SEA", "LAX", depart, prefs)
+    assert inner.calls == 3
+
+
+async def test_cached_flight_provider_never_caches_estimates():
+    class _StubSourceFlight(StubFlightProvider):
+        def __init__(self):
+            self.calls = 0
+
+        async def search(self, origin_airport, dest_airport, depart, prefs,
+                         return_date=None):
+            self.calls += 1
+            return await super().search(
+                origin_airport, dest_airport, depart, prefs, return_date)
+
+    inner = _StubSourceFlight()
+    cached = CachedFlightProvider(inner, MemoryCache(), ttl_s=60)
+    prefs = FlightPrefs()
+    depart = date(2026, 10, 16)
+    await cached.search("SEA", "LAX", depart, prefs)
+    await cached.search("SEA", "LAX", depart, prefs)
+    assert inner.calls == 2  # ESTIMATED quotes are never cached
+
+
+async def test_cached_flight_provider_never_caches_empty_results():
+    class _EmptyFlight(StubFlightProvider):
+        def __init__(self):
+            self.calls = 0
+
+        async def search(self, *args, **kwargs):
+            self.calls += 1
+            return []
+
+    inner = _EmptyFlight()
+    cached = CachedFlightProvider(inner, MemoryCache(), ttl_s=60)
+    prefs = FlightPrefs()
+    depart = date(2026, 10, 16)
+    assert await cached.search("SEA", "LAX", depart, prefs) == []
+    assert await cached.search("SEA", "LAX", depart, prefs) == []
+    assert inner.calls == 2  # empty offer lists are not cached

@@ -1,3 +1,43 @@
+# Phase 2d notes — Duffel fare cache with TTL
+
+## What changed
+- `core/cache.py`: new `FARE_TTL_S = 4h` (deliberately the shortest TTL —
+  fares move intraday) and an updated module docstring.
+- `providers/cached.py`: new `CachedFlightProvider`, same wrapper shape as
+  the driving/geocode caches. Key = airports + depart/return dates + all of
+  `FlightPrefs` (including `red_eye_ok`, which filters client-side *after*
+  the fetch, so it needs its own cache entries).
+- `api/trips.py::_providers`: wraps the Duffel provider only; the stub
+  stays unwrapped per the honesty rule.
+- 77 tests green (74 pre-existing + 3 new: live results cached, estimates
+  never cached, empty offer lists never cached).
+
+## Decisions
+
+### 1. Four hours, not four days
+Routes get 7 days (roads don't move) and geocodes 30 (coordinates never
+move). Fares move intraday, so 4h: long enough that tweaking a trip and
+re-searching doesn't re-pay the 15s airline fan-out, short enough to trust.
+Tunable in one constant.
+
+### 2. The key includes the client-side filter
+`red_eye_ok` never reaches Duffel — it's applied after the fetch. Caching
+the *filtered* quotes without it in the key would serve red-eyes to someone
+who asked for none. Two searches differing only there get two entries;
+slightly fewer hits, always correct.
+
+### 3. Empty results are misses, not data
+Like the geocoder's uncached misses: a transient "no offers" cached for 4h
+would hide recovery. Duffel failures raise (never cached); empty lists
+aren't written.
+
+## What's next
+- EIA remains a keyed optional upgrade (her call — no .gov for now).
+- `GET /trips/recent` operator view — `JobStore.recent()` already exists.
+- Separate worker pool consuming `pending` jobs.
+
+---
+
 # Phase 2c notes — frontend: fuel-price input on the trip form
 
 ## What changed

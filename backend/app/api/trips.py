@@ -20,7 +20,11 @@ from app.core.orchestrator import plan_trip
 from app.db import get_job_store
 from app.models import TripJob, TripRequest
 from app.providers.base import FuelPriceProvider
-from app.providers.cached import CachedDrivingProvider, CachedGeocoder
+from app.providers.cached import (
+    CachedDrivingProvider,
+    CachedFlightProvider,
+    CachedGeocoder,
+)
 from app.providers.duffel import DuffelFlightProvider
 from app.providers.eia import EIAFuelProvider, FallbackFuelProvider
 from app.providers.geo import FallbackGeocoder, NominatimGeocoder, StubGeocoder
@@ -68,7 +72,12 @@ def _providers(req: TripRequest):
     # else stays on stubs until its real provider lands.
     if settings.duffel_api_key:
         log.info("flights: Duffel (live prices)")
-        flights = DuffelFlightProvider(settings.duffel_api_key)
+        # Fare cache: offer requests fan out to airlines (15s supplier
+        # timeout, per-call cost live), so repeat searches reuse the quotes
+        # for FARE_TTL_S instead of re-paying. The stub stays unwrapped —
+        # ESTIMATED heuristics are never cached.
+        flights = CachedFlightProvider(
+            DuffelFlightProvider(settings.duffel_api_key), _cache)
     else:
         log.info("flights: stub (set DUFFEL_API_KEY for live prices)")
         flights = StubFlightProvider()
