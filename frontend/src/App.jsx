@@ -44,6 +44,50 @@ const PinIcon = (p) => (
   <Icon {...p} size={16} d="M12 21s-6.5-5.4-6.5-10.5A6.5 6.5 0 0 1 12 4a6.5 6.5 0 0 1 6.5 6.5C18.5 15.6 12 21 12 21z M12 12.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z" />
 );
 
+// Little animated header scene: a plane crosses the sky, a car putters
+// along the road below. Pure CSS keyframes — no libraries, no images.
+function AnimatedHeader() {
+  return (
+    <header style={{ textAlign: 'center', marginBottom: 20 }}>
+      <style>{`
+        @keyframes fe-fly { from { left: -10%; } to { left: 105%; } }
+        @keyframes fe-drive { from { left: -14%; } to { left: 105%; } }
+        @keyframes fe-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+        @keyframes fe-drift { from { left: -20%; } to { left: 110%; } }
+      `}</style>
+      <div style={{ position: 'relative', height: 118, overflow: 'hidden', borderRadius: 18, background: 'linear-gradient(180deg, #dff0ff 0%, #fdf6ec 78%)', border: `1.5px solid ${T.cardBorder}` }}>
+        {/* sun */}
+        <div style={{ position: 'absolute', top: 10, right: 26, width: 34, height: 34, borderRadius: '50%', background: '#ffd964', boxShadow: '0 0 18px rgba(255, 201, 61, 0.8)' }} />
+        {/* drifting clouds */}
+        <div style={{ position: 'absolute', top: 18, animation: 'fe-drift 26s linear infinite', color: '#ffffff', fontSize: 30, opacity: 0.9 }}>☁</div>
+        <div style={{ position: 'absolute', top: 44, animation: 'fe-drift 38s linear infinite', animationDelay: '-14s', color: '#ffffff', fontSize: 22, opacity: 0.8 }}>☁</div>
+        {/* plane on a dashed flight path */}
+        <svg style={{ position: 'absolute', top: 34, left: 0, width: '100%', height: 30 }} preserveAspectRatio="none" viewBox="0 0 100 10">
+          <path d="M0 8 Q 25 0, 50 6 T 100 4" fill="none" stroke="#b9c8d8" strokeWidth="0.8" strokeDasharray="2 1.6" />
+        </svg>
+        <div style={{ position: 'absolute', top: 26, animation: 'fe-fly 13s linear infinite', color: '#e8935a' }}>
+          <span style={{ display: 'inline-block', animation: 'fe-bob 2.2s ease-in-out infinite' }}>
+            <PlaneIcon size={30} />
+          </span>
+        </div>
+        {/* road with a driving car */}
+        <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 34, background: '#cbb59a', borderTop: '2px solid #b89e82' }}>
+          <div style={{ position: 'absolute', top: '50%', left: 0, right: 0, borderTop: '3px dashed #fdf6ec', transform: 'translateY(-50%)' }} />
+        </div>
+        <div style={{ position: 'absolute', bottom: 6, animation: 'fe-drive 8s linear infinite', color: '#3d8a5f' }}>
+          <span style={{ display: 'inline-block', animation: 'fe-bob 0.9s ease-in-out infinite' }}>
+            <CarIcon size={34} />
+          </span>
+        </div>
+      </div>
+      <h1 style={{ margin: '14px 0 0', fontSize: '2.2rem', color: T.ink }}>Fare Enough</h1>
+      <p style={{ margin: '4px 0 0', color: T.muted, fontSize: '1.05rem' }}>
+        fair enough — every way there, cheapest first.
+      </p>
+    </header>
+  );
+}
+
 // Address field with type-ahead: debounced calls to GET /geocode/suggest,
 // dropdown of concrete addresses ("350 5th St, …") so trips price
 // house-to-hotel instead of city-centroid to city-centroid.
@@ -128,13 +172,28 @@ const MODES = [
   { value: 'drive', title: 'Drive', blurb: 'Own or rental car', tint: T.mint, icon: <CarIcon /> },
 ];
 
+function StatusPill({ status }) {
+  if (status === 'complete') return null;
+  const failed = status === 'failed';
+  return (
+    <span style={{
+      background: failed ? T.peach : T.sky,
+      color: failed ? '#b25a1e' : '#1e6fb5',
+      borderRadius: 999, padding: '2px 10px',
+      fontSize: '0.72rem', fontWeight: 700, marginLeft: 8,
+    }}>
+      {failed ? 'failed' : 'pricing…'}
+    </span>
+  );
+}
+
 // Thin client over POST /trips (job model): submit, poll, render ranked options.
 export default function App() {
   const [form, setForm] = useState({
-    origin: 'Auburn, WA 98092',
-    destination_city: 'Los Angeles',
-    depart_date: '2026-10-16',
-    return_date: '2026-10-19',
+    origin: '',
+    destination_city: '',
+    depart_date: '',
+    return_date: '',
     mode: 'either',
     own_car: true,
     fuel_price_per_gal: '',
@@ -166,7 +225,16 @@ export default function App() {
     setForm({ ...form, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value });
   const setDirect = (k) => (v) => setForm((f) => ({ ...f, [k]: v }));
 
+  // No pre-filled defaults: the traveler types their own trip. The backend
+  // requires From, To, and Depart, so the button stays off until set.
+  const canSearch =
+    status !== 'searching' &&
+    form.origin.trim() !== '' &&
+    form.destination_city.trim() !== '' &&
+    form.depart_date !== '';
+
   async function search() {
+    if (!canSearch) return;
     setStatus('searching');
     setPlan(null);
     const payload = { ...form };
@@ -210,15 +278,8 @@ export default function App() {
 
   return (
     <div style={{ ...styles.page, background: T.pageBg }}>
-      <div style={{ maxWidth: 760, margin: '0 auto', padding: '2.5rem 1rem 4rem' }}>
-        <header style={{ textAlign: 'center', marginBottom: 24 }}>
-          <h1 style={{ margin: 0, fontSize: '2.2rem', color: T.ink }}>
-            Fare Enough
-          </h1>
-          <p style={{ margin: '4px 0 0', color: T.muted, fontSize: '1.05rem' }}>
-            fair enough — every way there, cheapest first.
-          </p>
-        </header>
+      <div style={{ maxWidth: 760, margin: '0 auto', padding: '2rem 1rem 4rem' }}>
+        <AnimatedHeader />
 
         <div style={styles.card}>
           <div style={{ display: 'grid', gap: 14 }}>
@@ -226,13 +287,13 @@ export default function App() {
               label="From"
               value={form.origin}
               onChange={setDirect('origin')}
-              placeholder="Your address — e.g. Auburn, WA 98092"
+              placeholder="Your address, e.g. 123 Main St, Auburn, WA"
             />
             <PlaceInput
               label="To"
               value={form.destination_city}
               onChange={setDirect('destination_city')}
-              placeholder="Hotel or address — e.g. Garden Grove, CA"
+              placeholder="Hotel or address, e.g. Garden Grove, CA"
             />
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <label style={styles.label}>Depart
@@ -290,9 +351,18 @@ export default function App() {
               </div>
             )}
 
-            <button onClick={search} disabled={status === 'searching'} style={styles.cta}>
+            <button onClick={search} disabled={!canSearch} style={{
+              ...styles.cta,
+              opacity: canSearch ? 1 : 0.55,
+              cursor: canSearch ? 'pointer' : 'default',
+            }}>
               {status === 'searching' ? 'Pricing every option…' : 'Find the cheapest way'}
             </button>
+            {!canSearch && status !== 'searching' && (
+              <small style={{ color: T.muted, textAlign: 'center' }}>
+                Fill in From, To, and your depart date to start.
+              </small>
+            )}
           </div>
         </div>
 
@@ -307,26 +377,33 @@ export default function App() {
           <div style={{ marginTop: 24 }}>
             <h3 style={{ fontSize: '1rem', margin: '0 0 10px', color: T.ink }}>Recent searches</h3>
             <div style={{ display: 'grid', gap: 8 }}>
-              {recents.map((r) => (
-                <button
-                  key={r.job_id}
-                  onClick={() => r.status === 'complete' && openRecent(r.job_id)}
-                  disabled={r.status !== 'complete'}
-                  title={r.status === 'complete' ? 'Load this plan' : `Job ${r.status}`}
-                  style={{
-                    ...styles.card, textAlign: 'left', padding: '10px 14px',
-                    cursor: r.status === 'complete' ? 'pointer' : 'default',
-                    opacity: r.status === 'complete' ? 1 : 0.6,
-                  }}
-                >
-                  <strong style={{ color: T.ink }}>{r.origin} → {r.destination_city}</strong>{' '}
-                  <small style={{ color: T.muted }}>
-                    {r.depart_date}{r.return_date ? ` – ${r.return_date}` : ''} · {r.status}
-                    {r.cheapest_usd != null && <> · cheapest ${r.cheapest_usd.toFixed(2)}</>}
-                    {r.error && <> · {r.error.slice(0, 60)}</>}
-                  </small>
-                </button>
-              ))}
+              {recents.map((r) => {
+                const done = r.status === 'complete';
+                const failed = r.status === 'failed';
+                return (
+                  <button
+                    key={r.job_id}
+                    onClick={() => done && openRecent(r.job_id)}
+                    disabled={!done}
+                    title={done ? 'Load this plan' : `Job ${r.status}`}
+                    style={{
+                      ...styles.card, textAlign: 'left', padding: '10px 14px',
+                      cursor: done ? 'pointer' : 'default',
+                      opacity: done ? 1 : 0.75,
+                    }}
+                  >
+                    <strong style={{ color: T.ink }}>{r.origin} → {r.destination_city}</strong>
+                    <StatusPill status={r.status} />
+                    <br />
+                    <small style={{ color: T.muted }}>
+                      {r.depart_date}{r.return_date ? ` – ${r.return_date}` : ''}
+                      {done && r.cheapest_usd != null && <> · cheapest ${r.cheapest_usd.toFixed(2)}</>}
+                      {failed && r.error && <> · {r.error.slice(0, 80)}</>}
+                      {!done && !failed && <> · still pricing — is the worker running?</>}
+                    </small>
+                  </button>
+                );
+              })}
             </div>
           </div>
         )}
