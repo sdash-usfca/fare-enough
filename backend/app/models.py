@@ -104,3 +104,4 @@ class RecentTrip(BaseModel):
     option_count: int = 0
     cheapest_usd: float | None = None  # cheapest option, when complete
     error: str | None = None
+    mode: TravelMode = TravelMode.EITHER  # which search produced this row

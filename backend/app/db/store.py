@@ -200,6 +200,7 @@ def _to_recent_trip(row: JobRow) -> RecentTrip:
         cheapest_usd=(plan.options[0].total_usd
                       if plan and plan.options else None),
         error=row.error,
+        mode=req.mode,
     )
 
 

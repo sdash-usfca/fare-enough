@@ -239,6 +239,25 @@ function StatusPill({ status }) {
   );
 }
 
+// Which search produced this recent row — so two identical routes run in
+// different modes (surprise-me vs fly) are distinguishable at a glance.
+function ModeTag({ mode }) {
+  const map = {
+    fly: { label: 'fly', bg: T.peach, fg: '#b25a1e' },
+    drive: { label: 'drive', bg: T.mint, fg: '#1e7a4c' },
+    either: { label: 'surprise me', bg: T.lavender, fg: '#5b4fb5' },
+  };
+  const m = map[mode] || map.either;
+  return (
+    <span style={{
+      background: m.bg, color: m.fg, borderRadius: 999, padding: '2px 10px',
+      fontSize: '0.72rem', fontWeight: 700, marginLeft: 8,
+    }}>
+      {m.label}
+    </span>
+  );
+}
+
 // Thin client over POST /trips (job model): submit, poll, render ranked options.
 export default function App() {
   const [form, setForm] = useState({
@@ -486,6 +505,7 @@ export default function App() {
                     }}
                   >
                     <strong style={{ color: T.ink }}>{r.origin} → {r.destination_city}</strong>
+                    <ModeTag mode={r.mode} />
                     {loadingThis
                       ? <span style={{ marginLeft: 8, fontSize: '0.8rem', color: T.muted }}>loading…</span>
                       : <StatusPill status={r.status} />}
