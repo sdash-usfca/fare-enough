@@ -16,7 +16,7 @@ import asyncio
 import logging
 import uuid
 
-from app.data.airports import ORIGIN_AIRPORTS, lookup_city
+from app.data.airports import AIRPORTS, METRO_CENTERS, ORIGIN_AIRPORTS, lookup_city
 from app.models import (
     LegQuote,
     TravelMode,
@@ -61,6 +61,22 @@ def _nearest_origin_airport(point: GeoPoint) -> tuple[str, float]:
         if mi < best_mi:
             best, best_mi = code, mi
     return best, round(best_mi, 1)
+
+
+def _nearest_metro(point: GeoPoint, max_miles: float = 75.0) -> str | None:
+    """Nearest curated metro key within max_miles of a geocoded point.
+
+    Lets full street addresses ("3411 S Las Vegas Blvd, Las Vegas, NV ...")
+    resolve to their metro even though they'd never match the curated
+    table by name. Returns None past the radius — better no flights than
+    flights to the wrong city.
+    """
+    best, best_mi = None, max_miles
+    for key, (lat, lon) in METRO_CENTERS.items():
+        mi = haversine_miles(point, GeoPoint(lat, lon))
+        if mi < best_mi:
+            best, best_mi = key, mi
+    return best
 
 
 async def _resolve_origin(
@@ -224,11 +240,27 @@ async def plan_trip(
 
     if req.mode in (TravelMode.FLY, TravelMode.EITHER):
         airports = lookup_city(req.destination_city)
+        if airports is None:
+            # Autocomplete hands us full street addresses ("3411 S Las Vegas
+            # Blvd, Las Vegas, NV 89109, United States") which never match
+            # the curated metro table by name — geocode and fall back to the
+            # nearest metro by distance.
+            try:
+                dest_point = await geocoder.geocode(req.destination_city)
+            except GeoError:
+                dest_point = None
+            metro = _nearest_metro(dest_point) if dest_point else None
+            airports = AIRPORTS.get(metro) if metro else None
         if airports:
             candidates = [airports["primary"], *airports["nearby"]]
             miles_map = airports["miles_to_city_center"]
         else:
+            # Silent empty results are the worst outcome — say why.
             candidates, miles_map = [], {}
+            plan_warnings.append(
+                "flight options unavailable — "
+                f"no airports on file near '{req.destination_city}'"
+            )
         try:
             # One geocode for all fly branches — not one per airport.
             origin_airport, home_miles = await _resolve_origin(req, geocoder)

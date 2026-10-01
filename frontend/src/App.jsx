@@ -532,6 +532,17 @@ export default function App() {
                 ))}
               </div>
             )}
+            {plan.options.length === 0 && (
+              <div style={{ ...styles.card, textAlign: 'center' }}>
+                <p style={{ color: T.ink, fontWeight: 700, fontSize: '1.05rem', margin: '0 0 6px' }}>
+                  No options found for this search.
+                </p>
+                <p style={{ color: T.muted, margin: 0 }}>
+                  The warnings above say which branches went missing and why —
+                  try a nearby major city as the destination.
+                </p>
+              </div>
+            )}
             {plan.options.map((o, idx) => (
               <div
                 key={o.id}

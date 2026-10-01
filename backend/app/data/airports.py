@@ -48,6 +48,21 @@ def lookup_city(city: str) -> dict | None:
     return AIRPORTS.get(city.strip().lower())
 
 
+# Approximate city-center coordinates so a full street address can resolve
+# to its metro: "3411 S Las Vegas Blvd, ..." never matches the curated
+# table by name, but it geocodes to ~36.1, -115.2 — clearly Las Vegas.
+# Kept next to the table so they can't drift apart.
+METRO_CENTERS: dict[str, tuple[float, float]] = {
+    "los angeles": (34.0522, -118.2437),
+    "san francisco": (37.7749, -122.4194),
+    "san diego": (32.7157, -117.1611),
+    "las vegas": (36.1699, -115.1398),
+    "portland": (45.5152, -122.6784),
+    "phoenix": (33.4484, -112.0740),
+    "denver": (39.7392, -104.9903),
+}
+
+
 # Origin airport candidates with coordinates. The geocoded origin's nearest
 # entry wins. Kept small and curated: on the departure side, "nearest major
 # airport" is a stable, human-verifiable fact — no API needed.

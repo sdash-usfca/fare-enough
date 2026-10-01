@@ -168,3 +168,53 @@ async def test_home_airport_miles_come_from_geocoding():
     home_leg = next(l for l in fly.legs if l.label.startswith("Rideshare home"))
     assert "~11 mi" in home_leg.detail
     assert "18 mi" not in home_leg.detail
+
+
+class _AddressGeocoder(StubGeocoder):
+    """Resolves full street addresses the way Nominatim would in prod."""
+
+    async def geocode(self, place: str):
+        low = place.lower()
+        if "garden grove" in low:
+            from app.providers.geo import GeoPoint
+            return GeoPoint(33.7743, -117.9381)  # Garden Grove, CA
+        if "las vegas" in low and "boulevard" in low:
+            from app.providers.geo import GeoPoint
+            return GeoPoint(36.1121, -115.1729)  # the Strip
+        return await super().geocode(place)
+
+
+async def test_full_street_address_resolves_to_nearest_metro():
+    # Regression: autocomplete hands us "Garden Grove, California, United
+    # States" — lookup_city can't match that by name, so fly mode used to
+    # silently return zero options.
+    providers = _providers()
+    providers["geocoder"] = _AddressGeocoder()
+    req = _req(destination_city="Garden Grove, California, United States",
+               mode=TravelMode.FLY)
+    plan = await plan_trip(req, **providers)
+    fly_options = [o for o in plan.options if o.mode == TravelMode.FLY]
+    # LAX + BUR/LGB/SNA/ONT, same as a bare "Los Angeles"
+    assert len(fly_options) == 5
+
+
+async def test_vegas_strip_address_resolves_to_las():
+    providers = _providers()
+    providers["geocoder"] = _AddressGeocoder()
+    req = _req(destination_city="3411 South Las Vegas Boulevard, Las Vegas, NV 89109, United States",
+               mode=TravelMode.FLY)
+    plan = await plan_trip(req, **providers)
+    airports = {l.label.split("→")[1].strip()
+                for o in plan.options if o.mode == TravelMode.FLY
+                for l in o.legs if l.label.startswith("Flight ")}
+    assert airports == {"LAS"}
+
+
+async def test_unresolvable_destination_warns_instead_of_silent_empty():
+    providers = _providers()
+    providers["geocoder"] = _NullGeocoder()
+    req = _req(destination_city="Nowhere, XX", mode=TravelMode.FLY)
+    plan = await plan_trip(req, **providers)
+    assert plan.options == []
+    assert any("no airports on file near 'Nowhere, XX'" in w
+               for w in plan.warnings)
