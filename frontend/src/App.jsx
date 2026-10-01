@@ -91,13 +91,31 @@ function AnimatedHeader() {
 // Address field with type-ahead: debounced calls to GET /geocode/suggest,
 // dropdown of concrete addresses ("350 5th St, …") so trips price
 // house-to-hotel instead of city-centroid to city-centroid.
+// Keyboard: ArrowUp/ArrowDown to move, Enter to pick, Escape to close.
 function PlaceInput({ label, value, onChange, placeholder }) {
   const [open, setOpen] = useState(false);
   const [suggestions, setSuggestions] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [activeIdx, setActiveIdx] = useState(-1);
   const reqId = useRef(0);
+  // Set when the user picks a suggestion: the resulting onChange would
+  // otherwise re-trigger a fetch for the just-picked label and pop the
+  // dropdown back open (the "have to click twice" bug).
+  const skipFetch = useRef(false);
+
+  function choose(s) {
+    skipFetch.current = true;
+    onChange(s.label);
+    setSuggestions([]);
+    setActiveIdx(-1);
+    setOpen(false);
+  }
 
   useEffect(() => {
+    if (skipFetch.current) {
+      skipFetch.current = false;
+      return;
+    }
     if (value.trim().length < 3) {
       setSuggestions([]);
       setOpen(false);
@@ -111,8 +129,10 @@ function PlaceInput({ label, value, onChange, placeholder }) {
           `${API}/geocode/suggest?q=${encodeURIComponent(value.trim())}&limit=6`
         );
         if (reqId.current !== id) return; // stale keystroke — drop it
-        setSuggestions(res.ok ? await res.json() : []);
-        setOpen(true);
+        const list = res.ok ? await res.json() : [];
+        setSuggestions(list);
+        setActiveIdx(-1);
+        setOpen(list.length > 0);
       } catch {
         if (reqId.current === id) {
           setSuggestions([]);
@@ -125,6 +145,23 @@ function PlaceInput({ label, value, onChange, placeholder }) {
     return () => clearTimeout(t);
   }, [value]);
 
+  function onKeyDown(e) {
+    if (e.key === 'ArrowDown' && suggestions.length > 0) {
+      e.preventDefault();
+      setActiveIdx((i) => (i + 1) % suggestions.length);
+      setOpen(true);
+    } else if (e.key === 'ArrowUp' && suggestions.length > 0) {
+      e.preventDefault();
+      setActiveIdx((i) => (i - 1 + suggestions.length) % suggestions.length);
+      setOpen(true);
+    } else if (e.key === 'Enter' && open && activeIdx >= 0 && suggestions[activeIdx]) {
+      e.preventDefault();
+      choose(suggestions[activeIdx]);
+    } else if (e.key === 'Escape') {
+      setOpen(false);
+    }
+  }
+
   return (
     <div style={{ position: 'relative' }}>
       <label style={styles.label}>
@@ -135,25 +172,37 @@ function PlaceInput({ label, value, onChange, placeholder }) {
           onChange={(e) => onChange(e.target.value)}
           onFocus={() => suggestions.length > 0 && setOpen(true)}
           onBlur={() => setTimeout(() => setOpen(false), 120)}
-          onKeyDown={(e) => e.key === 'Escape' && setOpen(false)}
+          onKeyDown={onKeyDown}
           style={styles.input}
           autoComplete="off"
+          role="combobox"
+          aria-expanded={open}
+          aria-activedescendant={activeIdx >= 0 ? `place-opt-${activeIdx}` : undefined}
         />
       </label>
       {loading && value.trim().length >= 3 && (
         <small style={{ color: T.muted }}>finding places…</small>
       )}
       {open && suggestions.length > 0 && (
-        <ul style={styles.dropdown}>
+        <ul style={styles.dropdown} role="listbox">
           {suggestions.map((s, i) => (
             <li
               key={`${s.lat},${s.lon},${i}`}
-              onMouseDown={() => {
-                onChange(s.label);
-                setOpen(false);
+              id={`place-opt-${i}`}
+              role="option"
+              aria-selected={i === activeIdx}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                choose(s);
               }}
-              style={styles.dropdownItem}
-              onMouseEnter={(e) => (e.currentTarget.style.background = T.peach)}
+              style={{
+                ...styles.dropdownItem,
+                background: i === activeIdx ? T.peach : 'transparent',
+              }}
+              onMouseEnter={(e) => {
+                setActiveIdx(i);
+                e.currentTarget.style.background = T.peach;
+              }}
               onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
             >
               <span style={{ color: T.muted, marginRight: 6 }}><PinIcon /></span>
@@ -161,6 +210,9 @@ function PlaceInput({ label, value, onChange, placeholder }) {
             </li>
           ))}
         </ul>
+      )}
+      {open && (
+        <small style={{ color: T.muted }}>↑↓ to move · Enter to pick · Esc to close</small>
       )}
     </div>
   );
@@ -201,6 +253,9 @@ export default function App() {
   const [plan, setPlan] = useState(null);
   const [status, setStatus] = useState('idle');
   const [recents, setRecents] = useState([]);
+  const [loadingJobId, setLoadingJobId] = useState(null);
+  const [recentError, setRecentError] = useState(null);
+  const resultsRef = useRef(null);
 
   async function loadRecents() {
     try {
@@ -212,12 +267,30 @@ export default function App() {
 
   useEffect(() => { loadRecents(); }, []);
 
+  function scrollToResults() {
+    // Let React paint the new plan first, then glide to it — no more
+    // yank-to-top that strands the results a screenful below.
+    setTimeout(() => {
+      resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 60);
+  }
+
   async function openRecent(job_id) {
-    const job = await (await fetch(`${API}/trips/${job_id}`)).json();
-    if (job.status === 'complete' && job.plan) {
-      setPlan(job.plan);
-      setStatus('done');
-      window.scrollTo({ top: 0 });
+    setLoadingJobId(job_id);
+    setRecentError(null);
+    try {
+      const job = await (await fetch(`${API}/trips/${job_id}`)).json();
+      if (job.status === 'complete' && job.plan) {
+        setPlan(job.plan);
+        setStatus('done');
+        scrollToResults();
+      } else {
+        setRecentError("Couldn't load that saved search — try running it again.");
+      }
+    } catch {
+      setRecentError("Couldn't reach the backend to load that search.");
+    } finally {
+      setLoadingJobId(null);
     }
   }
 
@@ -227,8 +300,17 @@ export default function App() {
 
   // No pre-filled defaults: the traveler types their own trip. The backend
   // requires From, To, and Depart, so the button stays off until set.
+  // Basic date sanity: depart can't be in the past, return can't precede depart.
+  const today = new Date().toISOString().slice(0, 10);
+  const dateError =
+    form.depart_date && form.depart_date < today
+      ? 'Depart date can\u2019t be in the past.'
+      : form.return_date && form.depart_date && form.return_date < form.depart_date
+        ? 'Return can\u2019t be before your depart date.'
+        : null;
   const canSearch =
     status !== 'searching' &&
+    !dateError &&
     form.origin.trim() !== '' &&
     form.destination_city.trim() !== '' &&
     form.depart_date !== '';
@@ -297,12 +379,17 @@ export default function App() {
             />
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <label style={styles.label}>Depart
-                <input type="date" value={form.depart_date} onChange={set('depart_date')} style={styles.input} />
+                <input type="date" value={form.depart_date} min={today} onChange={set('depart_date')} style={styles.input} />
               </label>
               <label style={styles.label}>Return
-                <input type="date" value={form.return_date} onChange={set('return_date')} style={styles.input} />
+                <input type="date" value={form.return_date} min={form.depart_date || today} onChange={set('return_date')} style={styles.input} />
               </label>
             </div>
+            {dateError && (
+              <div style={{ color: '#b25a1e', fontSize: '0.9rem', fontWeight: 600 }}>
+                ⚠ {dateError}
+              </div>
+            )}
 
             <div>
               <div style={{ ...styles.label, marginBottom: 8 }}>How do you want to go?</div>
@@ -376,24 +463,32 @@ export default function App() {
         {recents.length > 0 && (
           <div style={{ marginTop: 24 }}>
             <h3 style={{ fontSize: '1rem', margin: '0 0 10px', color: T.ink }}>Recent searches</h3>
+            {recentError && (
+              <div style={{ color: '#b25a1e', fontSize: '0.9rem', marginBottom: 8 }}>
+                ⚠ {recentError}
+              </div>
+            )}
             <div style={{ display: 'grid', gap: 8 }}>
               {recents.map((r) => {
                 const done = r.status === 'complete';
                 const failed = r.status === 'failed';
+                const loadingThis = loadingJobId === r.job_id;
                 return (
                   <button
                     key={r.job_id}
-                    onClick={() => done && openRecent(r.job_id)}
-                    disabled={!done}
+                    onClick={() => done && !loadingThis && openRecent(r.job_id)}
+                    disabled={!done || loadingThis}
                     title={done ? 'Load this plan' : `Job ${r.status}`}
                     style={{
                       ...styles.card, textAlign: 'left', padding: '10px 14px',
-                      cursor: done ? 'pointer' : 'default',
+                      cursor: done && !loadingThis ? 'pointer' : 'default',
                       opacity: done ? 1 : 0.75,
                     }}
                   >
                     <strong style={{ color: T.ink }}>{r.origin} → {r.destination_city}</strong>
-                    <StatusPill status={r.status} />
+                    {loadingThis
+                      ? <span style={{ marginLeft: 8, fontSize: '0.8rem', color: T.muted }}>loading…</span>
+                      : <StatusPill status={r.status} />}
                     <br />
                     <small style={{ color: T.muted }}>
                       {r.depart_date}{r.return_date ? ` – ${r.return_date}` : ''}
@@ -409,7 +504,7 @@ export default function App() {
         )}
 
         {plan && (
-          <div style={{ display: 'grid', gap: 12, marginTop: 24 }}>
+          <div ref={resultsRef} style={{ display: 'grid', gap: 12, marginTop: 24, scrollMarginTop: 12 }}>
             {plan.warnings && plan.warnings.length > 0 && (
               <div style={{ ...styles.card, background: '#fff8e6', border: '1px solid #e8c96a' }}>
                 {plan.warnings.map((w, i) => (
@@ -451,7 +546,7 @@ export default function App() {
                     );
                   })}
                 </ul>
-                {o.warnings.map((w, i) => (
+                {(o.warnings || []).map((w, i) => (
                   <small key={i} style={{ color: '#a60' }}>⚠ {w}</small>
                 ))}
               </div>
