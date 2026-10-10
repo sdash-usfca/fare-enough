@@ -11,7 +11,7 @@ background boundary.
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -51,7 +51,7 @@ class JobStore:
 
     async def create_job(self, job_id: str, req: TripRequest) -> TripJob:
         """Insert a pending job. Raises on duplicate job_id (DB constraint)."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         async with self._sessions() as s:
             s.add(JobRow(job_id=job_id, status=JobStatus.PENDING.value,
                          request_json=req.model_dump(mode="json"),
@@ -79,7 +79,7 @@ class JobStore:
                 raise KeyError(f"unknown job_id {job_id}")
             row.status = JobStatus.COMPLETE.value
             row.plan_json = plan.model_dump(mode="json")
-            row.updated_at = datetime.now(timezone.utc)
+            row.updated_at = datetime.now(UTC)
             await s.commit()
         log.info("job %s complete (%d options)", job_id, len(plan.options))
 
@@ -90,7 +90,7 @@ class JobStore:
                 raise KeyError(f"unknown job_id {job_id}")
             row.status = JobStatus.FAILED.value
             row.error = error[:2000]
-            row.updated_at = datetime.now(timezone.utc)
+            row.updated_at = datetime.now(UTC)
             await s.commit()
         log.warning("job %s failed: %s", job_id, error[:120])
 
@@ -100,7 +100,7 @@ class JobStore:
             if row is None:
                 raise KeyError(f"unknown job_id {job_id}")
             row.status = status.value
-            row.updated_at = datetime.now(timezone.utc)
+            row.updated_at = datetime.now(UTC)
             await s.commit()
 
     async def recent(self, limit: int = 50) -> list[TripJob]:
@@ -143,7 +143,7 @@ class JobStore:
                 .where(JobRow.job_id == job_id,
                        JobRow.status == JobStatus.PENDING.value)
                 .values(status=JobStatus.RUNNING.value,
-                        updated_at=datetime.now(timezone.utc))
+                        updated_at=datetime.now(UTC))
             )
             await s.commit()
             if (updated.rowcount or 0) != 1:
@@ -157,14 +157,14 @@ class JobStore:
         Called once at worker startup. Without it, a crash would leave jobs
         in running forever: invisible to claim_oldest_pending, never retried.
         """
-        cutoff = datetime.now(timezone.utc) - timedelta(seconds=older_than_s)
+        cutoff = datetime.now(UTC) - timedelta(seconds=older_than_s)
         async with self._sessions() as s:
             updated = await s.execute(
                 update(JobRow)
                 .where(JobRow.status == JobStatus.RUNNING.value,
                        JobRow.updated_at < cutoff)
                 .values(status=JobStatus.PENDING.value,
-                        updated_at=datetime.now(timezone.utc))
+                        updated_at=datetime.now(UTC))
             )
             await s.commit()
             n = updated.rowcount or 0

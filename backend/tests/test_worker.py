@@ -8,7 +8,6 @@ empty-queue behavior.
 
 from datetime import date
 
-import pytest
 import pytest_asyncio
 
 import app.api.trips as trips_mod

@@ -18,7 +18,6 @@ from app.models import (
     LegQuote,
     QuoteConfidence,
     TravelMode,
-    TripJob,
     TripOption,
     TripPlan,
     TripRequest,

@@ -148,3 +148,8 @@ def test_recent_not_swallowed_by_job_id_route(client):
     r = client.get("/trips/recent")
     assert r.status_code == 200
     assert isinstance(r.json(), list)
+
+
+def test_return_before_depart_is_422(client):
+    res = client.post("/trips", json={**BODY, "return_date": "2026-10-10"})
+    assert res.status_code == 422

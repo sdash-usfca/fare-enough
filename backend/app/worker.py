@@ -62,11 +62,11 @@ async def run_forever() -> None:
         try:
             if await run_once(store):
                 continue  # burst mode: more work may be waiting
-        except Exception:  # noqa: BLE001 — the loop must never die
+        except Exception:  # the loop must never die
             log.exception("worker iteration failed; continuing")
         try:
             await asyncio.wait_for(stop.wait(), timeout=POLL_INTERVAL_S)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
     log.info("worker stopped")
 
