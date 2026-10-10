@@ -218,3 +218,74 @@ async def test_unresolvable_destination_warns_instead_of_silent_empty():
     assert plan.options == []
     assert any("no airports on file near 'Nowhere, XX'" in w
                for w in plan.warnings)
+
+
+# --- Regressions for the cost-comparison and origin bugs -------------------
+
+def _leg_labels(option) -> list[str]:
+    return [l.label for l in option.legs]
+
+
+async def test_round_trip_rideshare_compared_against_parking():
+    # 1-day Auburn trip: rideshare is ~$23 each way (~$46 round trip),
+    # parking at SEA is $30. Comparing the one-way fare used to pick the
+    # $46 rideshare; the cheaper $30 parking must win.
+    plan = await plan_trip(_req(return_date=date(2026, 10, 17)), **_providers())
+    fly = next(o for o in plan.options if o.mode == TravelMode.FLY)
+    assert _leg_labels(fly)[0] == "Drive + park at SEA (1d)"
+    assert fly.legs[0].amount_usd == 30.0
+
+
+async def test_round_trip_rideshare_compared_against_rental():
+    # SNA is 35 mi out: ~$69 each way (~$139 round trip) vs a $78 1-day
+    # rental. The rental is cheaper for the whole trip and must win.
+    plan = await plan_trip(_req(return_date=date(2026, 10, 17), mode=TravelMode.FLY),
+                           **_providers())
+    sna = next(o for o in plan.options if "→ SNA" in o.summary)
+    assert _leg_labels(sna)[-1] == "Rental car at SNA (1d)"
+    assert sna.legs[-1].amount_usd == 78.0
+
+
+class _DenverGeocoder(StubGeocoder):
+    async def geocode(self, place: str):
+        if "denver" in place.lower():
+            from app.providers.geo import GeoPoint
+            return GeoPoint(39.7392, -104.9903)
+        return await super().geocode(place)
+
+
+async def test_origin_far_from_every_airport_gets_no_fly_options():
+    # Regression: Denver resolved to SJC (~950 mi) and priced "drive + park
+    # at SJC" for $75 with the 950-mile drive missing from the total.
+    providers = _providers()
+    providers["geocoder"] = _DenverGeocoder()
+    plan = await plan_trip(_req(origin="Denver, CO"), **providers)
+    assert all(o.mode == TravelMode.DRIVE for o in plan.options)
+    assert any("no departure airport on file within 100 mi" in w
+               and "SJC" in w for w in plan.warnings)
+
+
+async def test_fuel_priced_in_origin_state():
+    providers = _providers()
+    providers["geocoder"] = _DenverGeocoder()
+    plan = await plan_trip(_req(origin="Denver, CO", mode=TravelMode.DRIVE),
+                           **providers)
+    fuel = next(l for l in plan.options[0].legs if l.label.startswith("Fuel"))
+    assert "@ $3.55/gal" in fuel.label  # Colorado stub price, not California's
+    assert "CO avg" in fuel.detail
+
+
+async def test_unknown_origin_state_uses_national_fallback():
+    plan = await plan_trip(_req(origin="Auburn", mode=TravelMode.DRIVE), **_providers())
+    fuel = next(l for l in plan.options[0].legs if l.label.startswith("Fuel"))
+    assert "US avg" in fuel.detail
+
+
+async def test_no_own_car_drops_own_car_option():
+    plan = await plan_trip(_req(mode=TravelMode.DRIVE, own_car=False), **_providers())
+    assert [o.summary.split(" (")[0] for o in plan.options] == ["Drive a rental car"]
+
+
+async def test_own_car_offers_both_drive_options():
+    plan = await plan_trip(_req(mode=TravelMode.DRIVE), **_providers())
+    assert len(plan.options) == 2

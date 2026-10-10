@@ -6,7 +6,7 @@ These Pydantic models are the shared language between backend and frontends.
 from datetime import date, datetime
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class TravelMode(str, Enum):
@@ -39,6 +39,15 @@ class TripRequest(BaseModel):
     # real prices (the US record is under $8).
     fuel_price_per_gal: float | None = Field(
         default=None, gt=0, le=30, examples=[4.79])
+
+    @model_validator(mode="after")
+    def _return_not_before_depart(self) -> "TripRequest":
+        # Without this a reversed range silently priced as a 1-day trip
+        # (_trip_days clamps to 1) and the flight search failed downstream.
+        # The web form already blocks it; this guards every other client.
+        if self.return_date is not None and self.return_date < self.depart_date:
+            raise ValueError("return_date can't be before depart_date")
+        return self
 
 
 class QuoteConfidence(str, Enum):

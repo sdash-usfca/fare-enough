@@ -17,6 +17,7 @@ import logging
 import uuid
 
 from app.data.airports import AIRPORTS, METRO_CENTERS, ORIGIN_AIRPORTS, lookup_city
+from app.data.states import state_from_place
 from app.models import (
     LegQuote,
     TravelMode,
@@ -39,6 +40,10 @@ from app.providers.geo import (
 )
 
 _BRANCH_TIMEOUT_S = 20
+# Farthest we'll send a traveler to a departure airport. The home→airport
+# leg is priced as a rideshare or parking only — there is no drive leg —
+# so without a cap a Denver origin "parked at SJC" 950 mi away for $75.
+_MAX_HOME_AIRPORT_MILES = 100.0
 
 log = logging.getLogger(__name__)
 
@@ -84,13 +89,19 @@ async def _resolve_origin(
 ) -> tuple[str, float]:
     """Geocode the origin → (nearest origin airport, home→airport miles).
 
-    Raises GeoError if the origin can't be located — the caller turns that
-    into a user-visible warning and still prices drive options.
+    Raises GeoError if the origin can't be located, or if no departure
+    airport on file is within _MAX_HOME_AIRPORT_MILES — the caller turns
+    that into a user-visible warning and still prices drive options.
     """
     point = await geocoder.geocode(req.origin)
     if point is None:
         raise GeoError(f"could not locate origin {req.origin!r}")
-    return _nearest_origin_airport(point)
+    code, miles = _nearest_origin_airport(point)
+    if miles > _MAX_HOME_AIRPORT_MILES:
+        raise GeoError(
+            f"no departure airport on file within {_MAX_HOME_AIRPORT_MILES:.0f} mi "
+            f"of {req.origin!r} — nearest is {code}, {miles:.0f} mi away")
+    return code, miles
 
 
 async def _price_fly_option(
@@ -116,9 +127,11 @@ async def _price_fly_option(
         ground.rideshare_estimate(home_miles),
         ground.airport_parking(origin_airport, days),
     )
-    if ride.amount_usd <= park.amount_usd:
-        legs.append(_roundtrip_leg(
-            f"Rideshare home → {origin_airport}", ride, roundtrip))
+    # Compare like with like: the rideshare quote is one-way, parking already
+    # covers the whole stay — so double the rideshare *before* comparing.
+    ride_leg = _roundtrip_leg(f"Rideshare home → {origin_airport}", ride, roundtrip)
+    if ride_leg.amount_usd <= park.amount_usd:
+        legs.append(ride_leg)
     else:
         legs.append(LegQuote(label=f"Drive + park at {origin_airport} ({days}d)",
                              amount_usd=park.amount_usd, confidence=park.confidence,
@@ -140,10 +153,11 @@ async def _price_fly_option(
         ground.rideshare_estimate(airport_miles),
         rental.quote(days, dest_airport),
     )
-    if ride_out.amount_usd <= rental_q.amount_usd:
-        legs.append(_roundtrip_leg(
-            f"Rideshare {dest_airport} → {req.destination_city}",
-            ride_out, roundtrip))
+    # Same rule as above: the rental is priced for the whole stay.
+    ride_out_leg = _roundtrip_leg(
+        f"Rideshare {dest_airport} → {req.destination_city}", ride_out, roundtrip)
+    if ride_out_leg.amount_usd <= rental_q.amount_usd:
+        legs.append(ride_out_leg)
     else:
         legs.append(LegQuote(label=f"Rental car at {dest_airport} ({days}d)",
                              amount_usd=rental_q.amount_usd, confidence=rental_q.confidence,
@@ -177,8 +191,10 @@ async def _price_drive_option(
                        f"({miles:.0f} mi round trip, {route.hours:.1f}h each way)")
     else:
         drive_label = f"Drive {route.miles:.0f} mi ({route.hours:.1f}h one way)"
-    # STUB state detection; real impl reverse-geocodes the origin.
-    state = "WA" if "wa" in req.origin.lower() or "seattle" in req.origin.lower() else "CA"
+    # Fuel is priced in the origin's state (most people fill up near home).
+    # Unknown state → "US": the stub serves its national default and EIA
+    # misses into the same fallback, instead of guessing a wrong state.
+    state = state_from_place(req.origin) or "US"
     gas = await fuel.price_per_gallon(state)
     fuel_cost = round(miles / req.mpg * gas.amount_usd, 2)
 
@@ -277,14 +293,13 @@ async def plan_trip(
             ))
 
     if req.mode in (TravelMode.DRIVE, TravelMode.EITHER):
-        branches.append((
-            "drive (own car)",
-            _price_drive_option(req, True, driving, fuel, rental, days),
-        ))
-        if not req.own_car:
-            # User has no car: rental is the only drive option; still show both
-            # so they can compare against borrowing/buying later. Keep both.
-            pass
+        # No car → no own-car option: it's fuel-only, so it would otherwise
+        # rank as the cheapest way to go for someone who can't take it.
+        if req.own_car:
+            branches.append((
+                "drive (own car)",
+                _price_drive_option(req, True, driving, fuel, rental, days),
+            ))
         branches.append((
             "drive (rental car)",
             _price_drive_option(req, False, driving, fuel, rental, days),
