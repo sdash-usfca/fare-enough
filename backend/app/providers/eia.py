@@ -33,7 +33,6 @@ import httpx
 
 from app.models import QuoteConfidence
 from app.providers.base import FuelPriceProvider, MoneyQuote
-from app.providers.stubs import StubFuelProvider
 
 log = logging.getLogger(__name__)
 
