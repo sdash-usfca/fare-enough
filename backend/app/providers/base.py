@@ -19,6 +19,7 @@ class FlightQuote:
     confidence: QuoteConfidence
     source: str
     detail: str = ""  # e.g. "Alaska 1234, 06:10→08:45, nonstop"
+    hours: float | None = None  # outbound gate-to-gate time, when known
 
 
 @dataclass

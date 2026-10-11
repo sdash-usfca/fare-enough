@@ -133,6 +133,7 @@ class CachedFlightProvider(FlightProvider):
                     confidence=QuoteConfidence(q["confidence"]),
                     source=q["source"],
                     detail=q.get("detail", ""),
+                    hours=q.get("hours"),  # absent in entries cached before
                 )
                 for q in cached
             ]
@@ -145,7 +146,7 @@ class CachedFlightProvider(FlightProvider):
                 key,
                 [{"amount_usd": q.amount_usd,
                   "confidence": q.confidence.value,
-                  "source": q.source, "detail": q.detail}
+                  "source": q.source, "detail": q.detail, "hours": q.hours}
                  for q in quotes],
                 self._ttl_s,
             )

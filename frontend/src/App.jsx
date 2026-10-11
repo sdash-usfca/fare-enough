@@ -572,6 +572,9 @@ export default function App() {
                       <span style={styles.bestTag}>Best deal</span>
                     )}{' '}
                     {o.summary}
+                    {o.travel_note && (
+                      <div><small style={{ color: T.muted, fontWeight: 400 }}>⏱ {o.travel_note}</small></div>
+                    )}
                   </strong>
                   <div style={{ textAlign: 'right' }}>
                     <strong style={{ fontSize: '1.25rem', color: T.ink }}>${o.total_usd.toFixed(2)}</strong>

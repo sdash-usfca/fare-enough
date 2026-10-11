@@ -14,6 +14,7 @@ Get a free test key: https://duffel.com → dashboard → test mode API key
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date
 
 import httpx
@@ -37,6 +38,15 @@ def _is_red_eye(departure_hhmm: str) -> bool:
     """Overnight departure: 21:00–04:59 local."""
     hour = int(departure_hhmm.split(":")[0])
     return hour >= 21 or hour < 5
+
+
+def _iso_hours(duration: str | None) -> float | None:
+    """ISO 8601 duration ("PT2H26M", "P1DT1H5M") → hours. None if absent."""
+    m = re.fullmatch(r"P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?)?", duration or "")
+    if not m or not any(m.groups()):
+        return None
+    days, hours, minutes = (int(g) if g else 0 for g in m.groups())
+    return round(days * 24 + hours + minutes / 60, 2)
 
 
 def _slice_detail(s: dict) -> str | None:
@@ -85,6 +95,7 @@ def _offer_to_quote(
         confidence=confidence,
         source="duffel",
         detail=detail,
+        hours=_iso_hours(slices[0].get("duration")),
     )
     return dep, quote
 

@@ -202,3 +202,24 @@ async def test_all_non_usd_offers_raise_instead_of_empty():
     with pytest.raises(DuffelError, match="EUR, not USD"):
         await DuffelFlightProvider("duffel_test_x", _mock_client(handler)).search(
             "SEA", "LAX", date(2026, 10, 16), _prefs())
+
+
+@pytest.mark.parametrize("iso, hours", [
+    ("PT2H26M", 2.43), ("PT45M", 0.75), ("P1DT1H", 25.0), ("PT3H", 3.0),
+    (None, None), ("", None), ("garbage", None),
+])
+def test_iso_duration_to_hours(iso, hours):
+    from app.providers.duffel import _iso_hours
+    assert _iso_hours(iso) == hours
+
+
+async def test_offer_duration_reaches_the_quote():
+    offer = _offer("199.00", "06:10", "08:45")
+    offer["slices"][0]["duration"] = "PT2H35M"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": {"offers": [offer]}})
+
+    [quote] = await DuffelFlightProvider("duffel_test_x", _mock_client(handler)).search(
+        "SEA", "LAX", date(2026, 10, 16), _prefs())
+    assert quote.hours == 2.58

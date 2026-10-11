@@ -14,6 +14,7 @@ the user sees what went missing instead of silently fewer options
 
 import asyncio
 import logging
+import math
 import uuid
 
 from app.config import settings
@@ -55,6 +56,14 @@ _CAR_SEATS = 5
 # commonly cited US road "circuity factor" (Ballou et al., 2002). Applied to
 # home → airport, the one distance we only know as the crow flies.
 _ROAD_FACTOR = 1.2
+# Overnight stops on long drives: guests per hotel room (two queens).
+_ROOM_GUESTS = 4
+# Door-to-door time for fly options — rough, labeled "~", shown not priced.
+_AIRPORT_ARRIVE_EARLY_H = 1.5  # check-in + security before departure
+_DEPLANE_H = 0.5  # deplane + bags at the other end
+_LOCAL_MPH = 30.0  # city driving to/from airports
+_CRUISE_MPH = 450.0  # block-time estimate when the fare has no duration
+_TAXI_H = 0.5  # taxi, climb, approach on top of cruise
 
 log = logging.getLogger(__name__)
 
@@ -91,6 +100,15 @@ def _parking_days(req: TripRequest) -> int:
 
     Rentals stay on 24h periods (_trip_days) — that's how they're sold."""
     return (req.return_date - req.depart_date).days + 1 if req.return_date else 1
+
+
+def _drive_days(hours: float) -> int:
+    """Days on the road for one direction of a drive (≥ 1)."""
+    return max(1, math.ceil(hours / settings.max_drive_hours_per_day))
+
+
+def _fmt_hours(h: float) -> str:
+    return f"~{h:.0f}h" if h >= 3 else f"~{h:.1f}h"
 
 
 def _fuel_state(req: TripRequest) -> str:
@@ -175,6 +193,7 @@ async def _price_fly_option(
     rental: RentalCarProvider,
     fuel: FuelPriceProvider,
     days: int,
+    dest_center: GeoPoint | None = None,
 ) -> TripOption | None:
     """Price one fly branch: home → origin airport → dest airport → city."""
     legs: list[LegQuote] = []
@@ -262,6 +281,17 @@ async def _price_fly_option(
             amount_usd=rental_fuel, confidence=gas.confidence, source=gas.source,
             detail=f"{settings.default_mpg:.0f} mpg @ ${gas.amount_usd:.2f}/gal"))
 
+    # Door to door, one way: get to the airport, arrive early, fly, deplane,
+    # get into town. The fare's own duration when the provider has one.
+    flight_h = best.hours
+    if flight_h is None and dest_center is not None:
+        lat, lon = ORIGIN_AIRPORTS[origin_airport]
+        flight_h = haversine_miles(GeoPoint(lat, lon), dest_center) / _CRUISE_MPH + _TAXI_H
+    travel_h = None
+    if flight_h is not None:
+        travel_h = round(road_miles / _LOCAL_MPH + _AIRPORT_ARRIVE_EARLY_H + flight_h
+                         + _DEPLANE_H + airport_miles / _LOCAL_MPH, 1)
+
     total = round(sum(l.amount_usd for l in legs), 2)
     return TripOption(
         id=f"fly-{dest_airport.lower()}-{uuid.uuid4().hex[:6]}",
@@ -272,6 +302,9 @@ async def _price_fly_option(
         legs=legs,
         total_usd=total,
         per_person_usd=_per_person(total, req.travelers),
+        travel_hours=travel_h,
+        travel_note=(f"{_fmt_hours(travel_h)} door to door"
+                     + (" each way" if roundtrip else "")) if travel_h else "",
         warnings=warnings,
     )
 
@@ -327,6 +360,30 @@ async def _price_drive_option(
             label=f"Rental car ({days}d, picked up near home{_cars_note(cars)})",
             amount_usd=round(rq.amount_usd * cars, 2), confidence=rq.confidence,
             source=rq.source, detail=_times_cars(rq.detail, cars)))
+
+    # Long drives sleep somewhere: one night per extra day on the road.
+    drive_days = _drive_days(route.hours)
+    directions = 2 if _roundtrip(req) else 1
+    nights = (drive_days - 1) * directions
+    if nights:
+        rooms = _vehicles(req.travelers, _ROOM_GUESTS)
+        rate = settings.lodging_per_night_usd
+        legs.append(LegQuote(
+            label=(f"Overnight stops: {nights} night{'s' if nights > 1 else ''}"
+                   + (f" × {rooms} rooms" if rooms > 1 else "") + f" @ ${rate:.0f}"),
+            amount_usd=round(nights * rooms * rate, 2),
+            confidence=QuoteConfidence.ESTIMATED, source="costar-adr-2025",
+            detail=(f"{route.hours:.1f}h each way at ≤{settings.max_drive_hours_per_day:.0f}h"
+                    f"/day = {drive_days} days on the road each way; "
+                    "US average hotel rate 2025 (CoStar/STR)")))
+    # A drive that eats the whole trip is technically priced but useless.
+    if _roundtrip(req) and drive_days * 2 > _parking_days(req):
+        warnings.append(
+            f"the drive takes {drive_days} days each way — longer than your "
+            f"{_parking_days(req)}-day trip allows")
+    travel_note = f"{_fmt_hours(route.hours)} driving" + (" each way" if _roundtrip(req) else "")
+    if drive_days > 1:
+        travel_note += f", {drive_days - 1} night{'s' if drive_days > 2 else ''} on the road"
     total = round(sum(l.amount_usd for l in legs), 2)
     return TripOption(
         id=f"drive-{'own' if own_car else 'rental'}-{uuid.uuid4().hex[:6]}",
@@ -335,6 +392,8 @@ async def _price_drive_option(
         legs=legs,
         total_usd=total,
         per_person_usd=_per_person(total, req.travelers),
+        travel_hours=route.hours,
+        travel_note=travel_note,
         warnings=warnings,
     )
 
@@ -379,6 +438,7 @@ async def plan_trip(
 
     if req.mode in (TravelMode.FLY, TravelMode.EITHER):
         airports = lookup_city(req.destination_city)
+        metro = req.destination_city.strip().lower() if airports else None
         if airports is None:
             # Autocomplete hands us full street addresses ("3411 S Las Vegas
             # Blvd, Las Vegas, NV 89109, United States") which never match
@@ -390,6 +450,7 @@ async def plan_trip(
                 dest_point = None
             metro = _nearest_metro(dest_point) if dest_point else None
             airports = AIRPORTS.get(metro) if metro else None
+        dest_center = GeoPoint(*METRO_CENTERS[metro]) if metro else None
         if airports:
             candidates = [airports["primary"], *airports["nearby"]]
             miles_map = airports["miles_to_city_center"]
@@ -412,7 +473,7 @@ async def plan_trip(
                 f"flight {origin_airport}→{ap}",
                 _price_fly_option(req, ap, miles_map.get(ap, 20.0),
                                  origin_airport, home_miles,
-                                 flights, ground, rental, fuel, days),
+                                 flights, ground, rental, fuel, days, dest_center),
             ))
 
     if req.mode in (TravelMode.DRIVE, TravelMode.EITHER):

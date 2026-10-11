@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     # fuel (already priced) plus insurance and depreciation, which you pay
     # whether or not you take this trip.
     own_car_wear_per_mile_usd: float = 0.1104
+    # Long drives: past this many hours behind the wheel, the day ends in a
+    # hotel. 10h stays under the 11h federal limit for *professional* truck
+    # drivers — a sane ceiling for a family road trip.
+    max_drive_hours_per_day: float = 10.0
+    # One hotel room for a night: CoStar/STR US average daily rate, 2025.
+    lodging_per_night_usd: float = 160.54
 
 
 settings = Settings()

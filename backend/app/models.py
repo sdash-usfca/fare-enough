@@ -79,6 +79,10 @@ class TripOption(BaseModel):
     total_usd: float  # whole party
     # total ÷ travelers; None on plans stored before party size existed.
     per_person_usd: float | None = None
+    # One-way door-to-door time — shown, never priced: what an hour is worth
+    # is the traveler's call. Drives count wheel time; nights are in the note.
+    travel_hours: float | None = None
+    travel_note: str = ""  # e.g. "~6h door to door each way"
     warnings: list[str] = []  # e.g. "rental-car pricing unavailable; leg excluded"
 
 
