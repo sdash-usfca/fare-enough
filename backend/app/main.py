@@ -21,10 +21,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
-# Web UI runs on :5173 in dev; tighten this list in prod.
+# Web UI origins: :5173 in dev by default; CORS_ORIGINS='["https://…"]' in prod.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=settings.cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )

@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     # with zero infrastructure. Same SQLAlchemy code path either way.
     database_url: str = "sqlite+aiosqlite:///./fare_enough.db"
     redis_url: str | None = None
+    # Browser origins allowed to call the API. JSON list in the env, e.g.
+    # CORS_ORIGINS='["https://fare-enough.example"]' for a deployed UI.
+    cors_origins: list[str] = ["http://localhost:5173"]
 
     # Pricing heuristics (used by estimate providers; override per deploy).
     rideshare_base_fare_usd: float = 2.80
