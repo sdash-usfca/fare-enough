@@ -50,6 +50,11 @@ flight stub for real Duffel fares (test mode is free — get a key at
 https://duffel.com, dashboard → test mode). Everything else stays on stubs
 until its provider lands.
 
+**Live fuel prices:** set `GOOGLE_PLACES_API_KEY` in `backend/.env` (a Google
+Cloud key with **Places API (New)** enabled) to price fuel from real gas
+stations near your origin. About 1,000 lookups a month are free; results
+are cached for 6 hours. A price typed into the form always wins.
+
 **Roadmap:** real providers (Duffel for flights, OSRM for driving) →
 Postgres/Redis wiring → React Native iOS app on the same API → App Store.
 

@@ -10,6 +10,9 @@ What gets cached and why:
   live mode — 4-hour TTL. Fares move intraday, so this is deliberately the
   shortest TTL: fresh enough to trust, long enough that tweaking a trip and
   re-searching doesn't re-pay the airline fan-out.
+- Google Places pump prices (~1 km grid cell → median $/gal): 1,000 free
+  calls/month, then billed per call — 6-hour TTL. Stations reprice about
+  daily, so a morning search and an afternoon one can share the answer.
 
 What does NOT get cached: jobs (the system of record — Postgres, not a TTL
 store).
@@ -31,6 +34,7 @@ GEOCODE_TTL_S = 30 * 24 * 3600
 # Flight fares move intraday: shortest TTL of the three. Tunable — shorter
 # for live-mode thrift vs. freshness, longer for snappier repeat searches.
 FARE_TTL_S = 4 * 3600
+FUEL_TTL_S = 6 * 3600
 
 
 class Cache(Protocol):

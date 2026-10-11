@@ -1,3 +1,40 @@
+# Phase 3a notes — fuel prices from Google Places
+
+## What changed
+- New `providers/google_places.py`: `GooglePlacesFuelProvider` geocodes the
+  origin, runs Nearby Search for `gas_station` (20 nearest, ~5 mi), and
+  quotes the median fresh regular-unleaded price as `LIVE` /
+  `source="google-places"`.
+- `api/trips.py::_fuel_provider(req, geocoder)`: chain is user → Google
+  (if `GOOGLE_PLACES_API_KEY`) → EIA (if `EIA_API_KEY`) → stub.
+- `core/cache.py`: `FUEL_TTL_S = 6h`; `config.py`: `google_places_api_key`.
+- 129 tests green (114 + 15 new, all on `httpx.MockTransport`).
+
+## Decisions
+
+### 1. Median, not cheapest
+One station's stale or mistyped price shouldn't set the trip cost. The
+median of the nearby stations is robust to one outlier either way.
+
+### 2. Reject what we can't verify the unit of
+Google doesn't document $/gal vs $/liter. USD-only plus a $1.50–$15 band
+keeps a liter price (~$1.10) from quartering the fuel leg.
+
+### 3. Cost is a design constraint
+1,000 free calls/month at the Enterprise + Atmosphere tier. One fetch per
+trip (shared across drive branches), a 6h cache on a ~1 km grid, and a
+`places.fuelOptions`-only field mask. Failures are never cached.
+
+### 4. EIA stays, but optional and ranked below Google
+No key → it's simply absent from the chain, so "no government data" is
+the default; nothing to delete.
+
+## What's next
+- Verify against the live API with a real key (needs an explicit go-ahead: calls past the free tier are billed).
+- Passenger count; wear-and-tear per mile for own-car trips.
+
+---
+
 # Phase 2f notes — separate worker pool for jobs
 
 ## What changed

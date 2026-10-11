@@ -26,7 +26,13 @@ from app.providers.cached import (
 )
 from app.providers.duffel import DuffelFlightProvider
 from app.providers.eia import EIAFuelProvider, FallbackFuelProvider
-from app.providers.geo import FallbackGeocoder, NominatimGeocoder, StubGeocoder
+from app.providers.geo import (
+    FallbackGeocoder,
+    GeocodingProvider,
+    NominatimGeocoder,
+    StubGeocoder,
+)
+from app.providers.google_places import GooglePlacesFuelProvider
 from app.providers.osrm import FallbackDrivingProvider, OSRMDrivingProvider
 from app.providers.stubs import (
     HeuristicGroundProvider,
@@ -46,20 +52,25 @@ router = APIRouter(prefix="/trips", tags=["trips"])
 _cache = build_cache(settings.redis_url)
 
 
-def _fuel_provider(req: TripRequest) -> FuelPriceProvider:
+def _fuel_provider(req: TripRequest, geocoder: GeocodingProvider) -> FuelPriceProvider:
     # Fuel chain, highest priority first. The traveler's own price beats
-    # any average (their pump > a state survey); EIA beats the stub; the
-    # stub keeps the lights on so fuel never kills the drive options.
+    # everything (it's their pump); Google's station prices near the origin
+    # beat EIA's weekly state average; the stub keeps the lights on so fuel
+    # never kills the drive options.
     providers: list[FuelPriceProvider] = []
     if req.fuel_price_per_gal is not None:
         log.info("fuel: user price $%.2f/gal", req.fuel_price_per_gal)
         providers.append(UserFuelProvider(req.fuel_price_per_gal))
+    if settings.google_places_api_key:
+        log.info("fuel: Google Places (station prices near origin)")
+        providers.append(GooglePlacesFuelProvider(
+            settings.google_places_api_key, req.origin, geocoder, _cache))
     if settings.eia_api_key:
         log.info("fuel: EIA (live prices)")
         providers.append(EIAFuelProvider(settings.eia_api_key))
-    else:
+    if not (settings.google_places_api_key or settings.eia_api_key):
         log.info("fuel: stub (enter fuel_price_per_gal or set "
-                 "EIA_API_KEY for live prices)")
+                 "GOOGLE_PLACES_API_KEY for live prices)")
     providers.append(StubFuelProvider())
     return FallbackFuelProvider(providers)
 
@@ -100,11 +111,12 @@ def _providers(req: TripRequest):
         ),
         "ground": HeuristicGroundProvider(),
         "rental": StubRentalCarProvider(),
-        # EIA takes over fuel the moment EIA_API_KEY is set; the traveler's
-        # own fuel_price_per_gal beats both; the stub survives inside the
+        # Fuel chain (user → Google Places → EIA → stub), each live source
+        # active only when its key is set; the stub survives inside the
         # fallback as a labeled ESTIMATED safety net, same Chain of
-        # Responsibility as the driving providers above.
-        "fuel": _fuel_provider(req),
+        # Responsibility as the driving providers above. Shares the cached
+        # geocoder, so locating the origin for fuel costs no extra lookup.
+        "fuel": _fuel_provider(req, geocoder),
         "geocoder": geocoder,
     }
 
