@@ -1,3 +1,48 @@
+<!-- Newest first. Each entry's "What's next" is a snapshot from that phase;
+     the live roadmap is in README → Project status. -->
+
+# Phase 3f notes — docs refresh
+
+- README "Project status" rewritten: what's live vs estimated per leg, the
+  optional API keys, and a current roadmap (it still said "Phase 1 (now)").
+- `backend/.env.example` lists every key; `.gitignore` lets it through.
+- ARCHITECTURE decisions 17–18, file tour fixed (two rows were fused) and
+  updated (states.py, worker, smoke test, CI).
+
+---
+
+# Phase 3e notes — long drives
+
+## What changed
+- Drives past 10h/day add hotel nights each way ($160.54, CoStar 2025 ADR),
+  one room per 4 travelers; a warning when the drive doesn't fit the trip.
+- `travel_hours` / `travel_note` on every option (door to door, one way);
+  Duffel slice durations parsed and cached; UI shows "⏱ …".
+- 160 tests green (145 + 15).
+- End to end, Auburn → LA, 4-day trip: drives $1,211–1,223 with 4 hotel
+  nights and a "takes 3 days each way" warning; flights from $381, ~5h.
+
+## Decisions
+- Price the nights, show the hours (ARCHITECTURE.md decision 18).
+
+---
+
+# Phase 3d notes — fly-option pricing gaps
+
+## What changed
+- Drive-and-park includes the drive; calendar-day parking; no parking on
+  one-way trips; road miles (×1.2) to the airport; destination rental pays
+  fuel; Duffel non-USD fares rejected; one fuel lookup per trip.
+- 145 tests green (140 + 7 new, 4 reworked to the new math).
+
+## Decisions
+- One rule for all four: an option's total carries every cost it implies
+  (ARCHITECTURE.md decision 17).
+- Tests reworked, not loosened: the old 1-day-Auburn case now correctly
+  picks the rideshare, so parking tests moved to a home where parking wins.
+
+---
+
 # Phase 3c notes — own-car wear & tear
 
 ## What changed

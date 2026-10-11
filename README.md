@@ -52,30 +52,55 @@ to prove jobs persist).
 
 ## Project status
 
-**Phase 1 (now):** FastAPI backend + trip-pricing engine + minimal React web UI.
-Price providers run as **stubs** returning deterministic estimates, so the app
-works end-to-end with no API keys. Each stub is marked `# STUB` with a note on
-what the real implementation needs.
+The pricing engine, job pipeline, web UI and CI are done. Each price comes
+from a real source when one is configured, and from an honest, labeled
+estimate otherwise. Every leg in a result says which (`live`, `sandbox`,
+`user` or `estimated`, plus its source).
 
-**Live flight prices:** set `DUFFEL_API_KEY` in `backend/.env` to swap the
-flight stub for real Duffel fares (test mode is free — get a key at
-https://duffel.com, dashboard → test mode). Everything else stays on stubs
-until its provider lands.
+| Leg | Source today | Live when |
+|---|---|---|
+| Flights | Estimate (deterministic placeholder fare) | `DUFFEL_API_KEY` set: real fares and flight times |
+| Fuel price | Your typed price → Google Places → estimate | `GOOGLE_PLACES_API_KEY` set: median of nearby stations |
+| Driving distance and time | **Live** (OSRM), estimate as fallback | Always: no key needed |
+| Address lookup | **Live** (Nominatim), curated fallback | Always: no key needed |
+| Rental cars | Estimate ($58/day + $20 insurance) | No self-serve API exists ([why](ARCHITECTURE.md#11-no-live-rental-car-prices--researched-not-skipped)) |
+| Rideshare, parking | Estimate | No public fare APIs exist |
+| Wear & tear, hotels | Estimate (AAA 2025, CoStar 2025 averages) | Tunable per deploy |
 
-**Live fuel prices:** set `GOOGLE_PLACES_API_KEY` in `backend/.env` (a Google
-Cloud key with **Places API (New)** enabled) to price fuel from real gas
-stations near your origin. About 1,000 lookups a month are free; results
-are cached for 6 hours. A price typed into the form always wins.
+**What a result accounts for:** group size (seats vs vehicles), round trips,
+drive-and-park including the drive, calendar-day parking, rental fuel,
+overnight stops on long drives, wear on your own car, and door-to-door
+travel time (shown, not priced).
 
-**Roadmap:** real providers (Duffel for flights, OSRM for driving) →
-Postgres/Redis wiring → React Native iOS app on the same API → App Store.
+### API keys (all optional)
+
+Copy `backend/.env.example` to `backend/.env` and fill in what you have.
+Nothing is required: without keys the app runs end to end on estimates.
+
+- `DUFFEL_API_KEY`: [duffel.com](https://duffel.com) → dashboard → **test mode**
+  key (free, realistic sample fares, books nothing). Tracked in #7.
+- `GOOGLE_PLACES_API_KEY`: a Google Cloud key with **Places API (New)**
+  enabled. About 1,000 lookups a month are free; results are cached 6 hours.
+  Tracked in #2.
+- `EIA_API_KEY`: optional U.S. government weekly averages, ranked below
+  Google. Off unless set.
+
+### Roadmap
+
+- Verify Duffel and Google Places against the live APIs (#7, #2)
+- Stream results as each option finishes (SSE) instead of polling
+- More destinations and departure airports beyond the West Coast
+- Deploy (CORS currently allows only `localhost:5173`)
+- React Native iOS app on the same API
 
 ## Layout
 
 ```
 backend/          FastAPI service: API routes, pricing engine, price providers
 frontend/         React web UI (Vite)
+scripts/          smoke_test.sh: end-to-end check against a running stack
 ARCHITECTURE.md   Every significant decision and why — start here to learn the codebase
+PHASE_NOTES.md    What changed in each phase, newest first
 ```
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the design decisions behind this layout.
