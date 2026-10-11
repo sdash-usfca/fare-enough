@@ -208,6 +208,38 @@ level keeps it distinct from `LIVE` (API data) in the quote.
 actual pump price beats any state average, and it works with zero
 infrastructure. Constraints made the design better."
 
+## 14. Google Places for pump prices — no government data
+
+**Decision:** the default live fuel source is Google Places API (New):
+Nearby Search for `gas_station` around the geocoded origin, reading each
+station's `fuelOptions`, in `backend/app/providers/google_places.py`. The
+fuel chain is now user price → Google Places → EIA (only if keyed) → stub.
+
+**Why:** the traveler asked for no government data, and the alternatives
+didn't survive research: AAA and GasBuddy have no public API (scrapers
+break their terms), TomTom fuel prices need a business contract, and the
+"state average" APIs (OilPriceAPI, Zyla) resell EIA's weekly survey. Google
+reports the last known price at real stations — closer to "what the pump
+near me charges today" than any state average.
+
+**Tradeoffs (documented, not hidden):**
+- Cost: `fuelOptions` bills as *Nearby Search Enterprise + Atmosphere* —
+  1,000 free calls/month, paid after. Guards: one call per trip (both drive
+  branches share an in-flight fetch), a 6-hour cache on a ~1 km grid
+  (`FUEL_TTL_S`), and a field mask of `places.fuelOptions` only.
+- Unit: Google doesn't document it. US listings show $/gal, so only USD
+  prices inside a plausible $1.50–$15 band count — a $/liter price would
+  otherwise slip in at a quarter of the real cost.
+- Coverage: not every station reports prices; stale (>7 days), malformed,
+  and non-regular entries are dropped. Nothing usable → the chain falls
+  through to EIA or the labeled stub, never to a broken trip.
+- The origin's stations price the whole trip — the same "fill up near
+  home" simplification as decision 13.
+
+**Interview line:** "The data source the user would trust is the pump down
+the street, so I priced from real stations — and spent as much design on
+not burning the free tier as on the integration itself."
+
 ## File tour
 
 | Path | What it is | Why it exists |
@@ -223,6 +255,7 @@ infrastructure. Constraints made the design better."
 | `backend/app/providers/base.py` | Provider ABCs + `Quote` | Decision 3 and 4 |
 | `backend/app/providers/duffel.py` | Live flight prices (Duffel) | First real provider; active when `DUFFEL_API_KEY` is set |
 | `backend/app/providers/eia.py` | Live fuel prices (EIA) + fallback | Second real provider; active when `EIA_API_KEY` is set (decision 12) |
+| `backend/app/providers/google_places.py` | Station pump prices (Google Places) | Default live fuel source; active when `GOOGLE_PLACES_API_KEY` is set (decision 14) |
 | `backend/app/providers/user.py` | Traveler-supplied fuel price | Top of the fuel chain when `fuel_price_per_gal` is set (decision 13) |
 | `backend/app/providers/*.py` | Stub/real price sources | One file per source; swap without touching the engine |
 | `backend/app/data/airports.py` | Metro → airports mapping | Nearby-airport logic needs curated data, not an API || `backend/app/worker.py` | Worker pool: claims pending jobs, prices them | The execution half of the job model — decision 5 |

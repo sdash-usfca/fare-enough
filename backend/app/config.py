@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     # Free at https://www.eia.gov/opendata/register.php (emailed instantly).
     # Without it, fuel stays on the labeled stub estimate.
     eia_api_key: str | None = None
+    # Google Cloud key with "Places API (New)" enabled. Station-level pump
+    # prices near the origin; outranks EIA. 1,000 free calls/month (the
+    # fuelOptions field bills as Nearby Search Enterprise + Atmosphere).
+    google_places_api_key: str | None = None
     # Wired in Phase 1b (docker-compose already provides these services).
     # Postgres in compose/prod; SQLite file when unset so `uvicorn` works
     # with zero infrastructure. Same SQLAlchemy code path either way.
