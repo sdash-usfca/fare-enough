@@ -1,3 +1,37 @@
+# Phase 3b notes — party size (travelers 1–9)
+
+## What changed
+- `models.py`: `TripRequest.travelers` (1–9); `TripOption.per_person_usd`;
+  `TripPlan.travelers`. The new response fields have defaults, so plans
+  stored earlier still load.
+- `FlightProvider.search(..., passengers=1)`: Duffel sends one adult per
+  traveler (its `total_amount` covers the party), the stub scales per seat,
+  and the fare cache key includes party size.
+- `core/orchestrator.py`: rideshares × ceil(n/4); fuel, rentals and parking
+  × ceil(n/5); own-car drives warn when they assume a second car. Fly options
+  no longer offer "drive + park" when `own_car=False`.
+- `frontend/src/App.jsx`: Travelers field (clamped 1–9); "$X per person"
+  under each total for parties of 2+.
+- 137 tests green (129 + 8 new). End-to-end with a real API and worker, 6
+  travelers, Auburn → LA: drive own car $669 ($112/pp) vs cheapest flight
+  $1,849 ($308/pp).
+
+## Decisions
+
+### 1. The provider prices the party, the orchestrator never multiplies fares
+Same rule as round trips: Duffel already returns a party total, so a second
+multiplication would be silent overcharging. One place owns each unit.
+
+### 2. Vehicles, not people, for ground legs
+`ceil(n / seats)`: 4 is a standard rideshare, 5 a standard car. Simple and
+explainable on the receipt ("2 cars").
+
+## What's next
+- Wear-and-tear per mile for own-car trips (fuel-only still flatters driving).
+- Live Google Places check, blocked on a key (issue #2).
+
+---
+
 # Phase 3a notes — fuel prices from Google Places
 
 ## What changed
