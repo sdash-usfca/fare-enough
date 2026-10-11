@@ -265,6 +265,31 @@ who drives.
 vehicles were being added together. Once every leg is priced in the unit
 it's sold in, the ranking fixes itself."
 
+## 16. Own-car trips pay for wear, not just fuel
+
+**Decision:** own-car drives add a "Wear & tear" leg: miles × cars ×
+`OWN_CAR_WEAR_PER_MILE_USD` (default **$0.1104**, AAA *Your Driving Costs*
+2025: maintenance, repairs and tires, all-vehicle average). Labeled
+`ESTIMATED` / `aaa-driving-costs`. Rental drives get no such leg, because
+the rental rate already covers the car.
+
+**Why:** fuel-only made your own car look nearly free per mile, so it won
+every comparison. The question the app answers is "what does *this trip*
+cost me", so the right number is the **marginal** cost of the miles.
+
+**Why not the IRS rate (76¢/mi from July 2026):** it double-counts fuel
+(already its own leg) and bundles insurance and depreciation, which are
+mostly fixed costs you pay whether or not you take the trip. Using it would
+swing the bias from "driving is free" to "driving is ruinous". It's also
+government data, which this project avoids by default (decision 14).
+
+**Tradeoffs:** one average for every car (AAA ranges 10.2–11.9¢ across body
+types; close enough not to need a car-type field yet). Tunable per deploy.
+
+**Interview line:** "I priced the marginal cost of the miles, not the cost
+of owning the car, and wrote down why the obvious IRS number is the wrong
+one for this question."
+
 ## File tour
 
 | Path | What it is | Why it exists |

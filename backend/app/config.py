@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     rental_car_daily_usd: float = 58.00
     rental_insurance_daily_usd: float = 20.00
     default_mpg: float = 28.0
+    # What a mile costs your own car beyond fuel: maintenance, repairs and
+    # tires. AAA "Your Driving Costs" 2025, average of all vehicle types.
+    # Deliberately NOT the IRS rate (76¢ from Jul 2026): that one bundles
+    # fuel (already priced) plus insurance and depreciation, which you pay
+    # whether or not you take this trip.
+    own_car_wear_per_mile_usd: float = 0.1104
 
 
 settings = Settings()

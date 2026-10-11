@@ -1,3 +1,33 @@
+# Phase 3c notes — own-car wear & tear
+
+## What changed
+- `config.py`: `own_car_wear_per_mile_usd = 0.1104` (AAA 2025).
+- `core/orchestrator.py`: own-car drives add a "Wear & tear" leg (miles ×
+  rate × cars); rental drives don't.
+- 140 tests green (137 + 3 new).
+- End to end (real OSRM), solo, Auburn → LA round trip (2,231 mi): own car
+  $580.95 (fuel $334.65 + wear $246.30) now ranks just **behind** a rental at
+  $568.65. Auburn → Portland (307 mi): own car still wins easily, $80.05.
+
+## Decisions
+
+### 1. Marginal cost, not cost of ownership
+AAA's maintenance-repairs-tires figure, not the IRS rate. See ARCHITECTURE.md
+decision 16.
+
+### 2. The long-road-trip flip is real, not a bug
+Past ~2,000 mi, wear plus fuel can exceed a few days' rental plus fuel. Real
+road-trippers rent for exactly this reason. Still, the rental side is a stub
+estimate ($58/day + $20 insurance), so the margin is only as good as that
+estimate (decision 11).
+
+## What's next
+- "Drive + park at the airport" still omits the fuel and wear of the drive to
+  the airport (small for a ~11 mi trip, but not zero).
+- Live Google Places check, blocked on a key (issue #2).
+
+---
+
 # Phase 3b notes — party size (travelers 1–9)
 
 ## What changed
