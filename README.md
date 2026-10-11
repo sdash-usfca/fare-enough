@@ -38,6 +38,18 @@ Or with Docker:
 docker compose up --build
 ```
 
+## Tests
+
+```bash
+cd backend && pytest tests -q          # unit + in-process integration (no network)
+scripts/smoke_test.sh                  # end-to-end against a running stack
+```
+
+CI runs three jobs on every PR: **backend** (ruff + pytest), **frontend**
+(production build), and **e2e** (`docker compose up` with API, worker,
+Postgres and Redis, then `scripts/smoke_test.sh`, including an API restart
+to prove jobs persist).
+
 ## Project status
 
 **Phase 1 (now):** FastAPI backend + trip-pricing engine + minimal React web UI.

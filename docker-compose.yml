@@ -12,10 +12,22 @@ services:
       # asyncpg scheme: SQLAlchemy's async engine needs an explicit driver.
       - DATABASE_URL=postgresql+asyncpg://fareenough:fareenough@db:5432/fareenough
       - REDIS_URL=redis://redis:6379/0
+    # Wait for Postgres to *accept connections*, not just for its container
+    # to exist: the lifespan runs init_db() at startup and exits if the
+    # database isn't up yet — a race on every cold `docker compose up`.
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    # python:3.12-slim has no curl; urllib is always there. Lets
+    # `docker compose up --wait` (CI e2e) block until the API serves.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
 
   # Job execution lives here, not in the API: POST /trips only enqueues,
   # workers claim pending rows atomically (never double-run). One for dev;
@@ -25,9 +37,11 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://fareenough:fareenough@db:5432/fareenough
       - REDIS_URL=redis://redis:6379/0
-    depends_on:
-      - db
-      - redis
+    depends_on:  # same startup race as the api — init_db() runs first
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     command: python -m app.worker
 
   db:
@@ -38,9 +52,19 @@ services:
       - POSTGRES_DB=fareenough
     volumes:
       - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fareenough -d fareenough"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
 
   redis:
     image: redis:7
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
 
 volumes:
   postgres-data:
