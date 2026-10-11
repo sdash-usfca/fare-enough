@@ -162,11 +162,12 @@ async def test_unresolvable_origin_warns_but_drive_options_survive():
 
 
 async def test_home_airport_miles_come_from_geocoding():
-    # Auburn → SEA is ~11 mi straight-line; the old code hardcoded 18.0.
+    # Auburn → SEA is ~11 mi straight-line (the old code hardcoded 18.0),
+    # ~13 mi by road after the ×1.2 circuity factor.
     plan = await plan_trip(_req(), **_providers())
     fly = next(o for o in plan.options if o.mode == TravelMode.FLY)
     home_leg = next(l for l in fly.legs if l.label.startswith("Rideshare home"))
-    assert "~11 mi" in home_leg.detail
+    assert "~13 mi" in home_leg.detail
     assert "18 mi" not in home_leg.detail
 
 
@@ -226,14 +227,32 @@ def _leg_labels(option) -> list[str]:
     return [l.label for l in option.legs]
 
 
+class _FarFromSeaGeocoder(StubGeocoder):
+    """Home ~20 mi straight-line south of SEA (~24 road mi)."""
+
+    async def geocode(self, place: str):
+        from app.providers.geo import GeoPoint
+        return GeoPoint(47.16, -122.31)
+
+
+def _far_providers():
+    providers = _providers()
+    providers["geocoder"] = _FarFromSeaGeocoder()
+    return providers
+
+
 async def test_round_trip_rideshare_compared_against_parking():
-    # 1-day Auburn trip: rideshare is ~$23 each way (~$46 round trip),
-    # parking at SEA is $30. Comparing the one-way fare used to pick the
-    # $46 rideshare; the cheaper $30 parking must win.
-    plan = await plan_trip(_req(return_date=date(2026, 10, 17)), **_providers())
-    fly = next(o for o in plan.options if o.mode == TravelMode.FLY)
-    assert _leg_labels(fly)[0] == "Drive + park at SEA (1d)"
-    assert fly.legs[0].amount_usd == 30.0
+    # 1-day trip from ~24 road mi out: the rideshare is ~$48 one way but ~$97
+    # round trip; driving + 2 calendar days of parking is ~$73. Comparing the
+    # one-way fare used to pick the rideshare; the cheaper parking must win.
+    plan = await plan_trip(_req(return_date=date(2026, 10, 17), mode=TravelMode.FLY),
+                           **_far_providers())
+    fly = plan.options[0]
+    assert _leg_labels(fly)[:2] == ["Park at SEA (2 days)",
+                                    "Drive home → SEA and back (48 mi)"]
+    park_total = fly.legs[0].amount_usd + fly.legs[1].amount_usd
+    assert fly.legs[0].amount_usd == 60.0  # $30/day × 2 calendar days
+    assert 48 < park_total < 97
 
 
 async def test_round_trip_rideshare_compared_against_rental():
@@ -242,8 +261,10 @@ async def test_round_trip_rideshare_compared_against_rental():
     plan = await plan_trip(_req(return_date=date(2026, 10, 17), mode=TravelMode.FLY),
                            **_providers())
     sna = next(o for o in plan.options if "→ SNA" in o.summary)
-    assert _leg_labels(sna)[-1] == "Rental car at SNA (1d)"
-    assert sna.legs[-1].amount_usd == 78.0
+    assert _leg_labels(sna)[-2:] == ["Rental car at SNA (1d)",
+                                     "Rental fuel: 70 mi airport ↔ city"]
+    assert sna.legs[-2].amount_usd == 78.0
+    assert sna.summary == "Fly SEA → SNA, then rental car to Los Angeles"
 
 
 class _DenverGeocoder(StubGeocoder):
@@ -346,13 +367,13 @@ async def test_solo_traveler_labels_unchanged():
 
 
 async def test_no_car_never_parks_at_the_airport():
-    # 1-day trip: parking ($30) beats the round-trip rideshare (~$46) — but
-    # only for someone with a car to park.
+    # Parking beats the round-trip rideshare from ~24 road mi out — but only
+    # for someone with a car to park.
     with_car = await plan_trip(_req(return_date=date(2026, 10, 17), mode=TravelMode.FLY),
-                               **_providers())
+                               **_far_providers())
     no_car = await plan_trip(_req(return_date=date(2026, 10, 17), mode=TravelMode.FLY,
-                                  own_car=False), **_providers())
-    assert with_car.options[0].legs[0].label.startswith("Drive + park")
+                                  own_car=False), **_far_providers())
+    assert with_car.options[0].legs[0].label.startswith("Park at")
     assert all(o.legs[0].label.startswith("Rideshare home") for o in no_car.options)
 
 
@@ -387,3 +408,49 @@ async def test_wear_scales_per_car_and_follows_setting(monkeypatch):
     assert "@ $0.20/mi" in w1.label
     assert w6.amount_usd == round(w1.amount_usd * 2, 2)
     assert w6.label.endswith("× 2 cars")
+
+
+# --- Pricing gaps: calendar-day parking, drive to airport, rental fuel ------
+
+async def test_one_way_trip_never_parks():
+    # One-way, the car would be stranded in the lot — rideshare only, even
+    # when parking for "1 day" would look cheaper.
+    plan = await plan_trip(_req(return_date=None, mode=TravelMode.FLY), **_far_providers())
+    assert all(o.legs[0].label.startswith("Rideshare home") for o in plan.options)
+
+
+class _SixtyMilesFromSeaGeocoder(StubGeocoder):
+    """~60 mi straight-line south of SEA: a $280 round-trip rideshare, so
+    driving + parking always wins and its math is always checked."""
+
+    async def geocode(self, place: str):
+        from app.providers.geo import GeoPoint
+        return GeoPoint(46.58, -122.31)
+
+
+async def test_parking_charges_calendar_days():
+    providers = _providers()
+    providers["geocoder"] = _SixtyMilesFromSeaGeocoder()
+    plan = await plan_trip(_req(mode=TravelMode.FLY), **providers)
+    fly = plan.options[0]
+    # Fri 16 → Mon 19 is 3 nights but 4 days in the lot: $30 × 4.
+    assert fly.legs[0].label == "Park at SEA (4 days)"
+    assert fly.legs[0].amount_usd == 120.0
+    drive = fly.legs[1]
+    assert drive.label.startswith("Drive home → SEA and back")
+    assert "fuel $" in drive.detail and "wear $" in drive.detail
+    assert drive.amount_usd > 0
+
+
+async def test_fuel_looked_up_once_per_trip():
+    class _CountingFuel(StubFuelProvider):
+        calls = 0
+
+        async def price_per_gallon(self, state):
+            type(self).calls += 1
+            return await super().price_per_gallon(state)
+
+    providers = _providers()
+    providers["fuel"] = _CountingFuel()
+    await plan_trip(_req(), **providers)  # 5 fly + 2 drive branches
+    assert _CountingFuel.calls == 1

@@ -60,11 +60,15 @@ def _offer_to_quote(
 ) -> tuple[str, FlightQuote] | None:
     """Map one Duffel offer → (outbound departure HH:MM, FlightQuote).
 
-    None if malformed. For round trips, total_amount already covers both
-    directions — the orchestrator must NOT double it again."""
+    None if malformed or not priced in USD. For round trips, total_amount
+    already covers both directions — the orchestrator must NOT double it."""
     try:
         amount = float(offer["total_amount"])
         slices = offer["slices"]
+        # Duffel prices in the account's currency. Every other leg is USD, so
+        # a EUR fare added as dollars would silently skew the ranking.
+        if offer["total_currency"] != "USD":
+            return None
     except (KeyError, TypeError, ValueError):
         return None
     out_detail = _slice_detail(slices[0]) if slices else None
@@ -182,6 +186,13 @@ class DuffelFlightProvider(FlightProvider):
             raise DuffelError(f"unexpected Duffel response shape: {exc}") from exc
 
         quotes: list[FlightQuote] = []
+        currencies = {o.get("total_currency") for o in offers if isinstance(o, dict)}
+        if offers and "USD" not in currencies:
+            # Not "no flights": the fares exist but can't be added to USD legs.
+            # Raising surfaces it as a plan warning instead of a silent gap.
+            raise DuffelError(
+                f"Duffel returned fares in {', '.join(sorted(map(str, currencies)))}, "
+                "not USD — set the Duffel account currency to USD")
         for offer in offers:
             mapped = _offer_to_quote(offer, self._confidence)
             if mapped is None:
