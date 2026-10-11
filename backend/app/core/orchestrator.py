@@ -51,6 +51,10 @@ _MAX_HOME_AIRPORT_MILES = 100.0
 # car (own, rental, or parked) seats 5. Six travelers = 2 rideshares or 2 cars.
 _RIDESHARE_SEATS = 4
 _CAR_SEATS = 5
+# Geocoding gives straight-line miles; roads are longer. ~1.2 is the
+# commonly cited US road "circuity factor" (Ballou et al., 2002). Applied to
+# home → airport, the one distance we only know as the crow flies.
+_ROAD_FACTOR = 1.2
 
 log = logging.getLogger(__name__)
 
@@ -80,6 +84,38 @@ def _times_cars(detail: str, cars: int) -> str:
 
 def _per_person(total: float, travelers: int) -> float:
     return round(total / travelers, 2)
+
+
+def _parking_days(req: TripRequest) -> int:
+    """Calendar days the car sits in the lot: Fri→Mon is 4 days, not 3.
+
+    Rentals stay on 24h periods (_trip_days) — that's how they're sold."""
+    return (req.return_date - req.depart_date).days + 1 if req.return_date else 1
+
+
+def _fuel_state(req: TripRequest) -> str:
+    # Fuel is priced in the origin's state (most people fill up near home).
+    # Unknown state → "US": the stub serves its national default and EIA
+    # misses into the same fallback, instead of guessing a wrong state.
+    return state_from_place(req.origin) or "US"
+
+
+class _OncePerTrip(FuelPriceProvider):
+    """Every branch of one trip shares one fuel lookup.
+
+    Fly branches price the drive to the airport and rental fuel, drive
+    branches price the road trip — up to 7 concurrent asks for the same
+    number. One call keeps paid sources (Google Places) and rate limits
+    (EIA) honest."""
+
+    def __init__(self, inner: FuelPriceProvider):
+        self._inner = inner
+        self._tasks: dict[str, asyncio.Task] = {}
+
+    async def price_per_gallon(self, state: str):
+        if state not in self._tasks:
+            self._tasks[state] = asyncio.ensure_future(self._inner.price_per_gallon(state))
+        return await self._tasks[state]
 
 
 def _nearest_origin_airport(point: GeoPoint) -> tuple[str, float]:
@@ -137,19 +173,21 @@ async def _price_fly_option(
     flights: FlightProvider,
     ground: GroundTransportProvider,
     rental: RentalCarProvider,
+    fuel: FuelPriceProvider,
     days: int,
 ) -> TripOption | None:
     """Price one fly branch: home → origin airport → dest airport → city."""
     legs: list[LegQuote] = []
     warnings: list[str] = []
     roundtrip = _roundtrip(req)
+    road_miles = round(home_miles * _ROAD_FACTOR, 1)
+    park_days = _parking_days(req)
 
-    # Home → origin airport: rideshare vs parking, cheaper wins.
-    # home_miles is straight-line from geocoding — the "~" in the detail
-    # comes from the heuristic provider, so the estimate stays honest.
-    ride, park = await asyncio.gather(
-        ground.rideshare_estimate(home_miles),
-        ground.airport_parking(origin_airport, days),
+    # Home → origin airport: rideshare vs drive-and-park, cheaper wins.
+    ride, park, gas = await asyncio.gather(
+        ground.rideshare_estimate(road_miles),
+        ground.airport_parking(origin_airport, park_days),
+        fuel.price_per_gallon(_fuel_state(req)),
     )
     rides = _vehicles(req.travelers, _RIDESHARE_SEATS)
     cars = _vehicles(req.travelers, _CAR_SEATS)
@@ -158,15 +196,30 @@ async def _price_fly_option(
     # Both scale per vehicle, not per traveler.
     ride_leg = _roundtrip_leg(f"Rideshare home → {origin_airport}", ride,
                               roundtrip, vehicles=rides)
-    park_usd = round(park.amount_usd * cars, 2)
-    # No car → nothing to park: the rideshare is the only way to the airport.
-    if not req.own_car or ride_leg.amount_usd <= park_usd:
+    # Driving yourself costs the lot *and* the drive there and back.
+    drive_miles = road_miles * 2 * cars
+    drive_fuel = drive_miles / req.mpg * gas.amount_usd
+    drive_wear = drive_miles * settings.own_car_wear_per_mile_usd
+    park_legs = [
+        LegQuote(label=f"Park at {origin_airport} ({park_days} days{_cars_note(cars)})",
+                 amount_usd=round(park.amount_usd * cars, 2),
+                 confidence=park.confidence, source=park.source,
+                 detail=_times_cars(park.detail, cars)),
+        LegQuote(label=(f"Drive home → {origin_airport} and back "
+                        f"({road_miles * 2:.0f} mi{_cars_note(cars)})"),
+                 amount_usd=round(drive_fuel + drive_wear, 2),
+                 confidence=gas.confidence, source=gas.source,
+                 detail=(f"fuel ${drive_fuel:.2f} @ ${gas.amount_usd:.2f}/gal + "
+                         f"wear ${drive_wear:.2f}; ~road miles (straight-line × "
+                         f"{_ROAD_FACTOR})")),
+    ]
+    # Parking only makes sense with a car to park and a trip back to it:
+    # one-way, the car would be stranded in the lot.
+    can_park = req.own_car and roundtrip
+    if not can_park or ride_leg.amount_usd <= sum(l.amount_usd for l in park_legs):
         legs.append(ride_leg)
     else:
-        legs.append(LegQuote(
-            label=f"Drive + park at {origin_airport} ({days}d{_cars_note(cars)})",
-            amount_usd=park_usd, confidence=park.confidence,
-            source=park.source, detail=_times_cars(park.detail, cars)))
+        legs.extend(park_legs)
 
     # Flight: cheapest offer for this airport pair. The provider prices the
     # full round trip when return_date is set — never double it here.
@@ -192,19 +245,30 @@ async def _price_fly_option(
         f"Rideshare {dest_airport} → {req.destination_city}", ride_out,
         roundtrip, vehicles=rides)
     rental_usd = round(rental_q.amount_usd * cars, 2)
-    if ride_out_leg.amount_usd <= rental_usd:
+    # The rental burns fuel on the same airport ↔ city trips the rideshare
+    # would make — price that, or the rental always looks cheaper than it is.
+    rental_miles = airport_miles * (2 if roundtrip else 1)
+    rental_fuel = round(rental_miles / settings.default_mpg * gas.amount_usd * cars, 2)
+    if ride_out_leg.amount_usd <= rental_usd + rental_fuel:
         legs.append(ride_out_leg)
     else:
         legs.append(LegQuote(
             label=f"Rental car at {dest_airport} ({days}d{_cars_note(cars)})",
             amount_usd=rental_usd, confidence=rental_q.confidence,
             source=rental_q.source, detail=_times_cars(rental_q.detail, cars)))
+        legs.append(LegQuote(
+            label=(f"Rental fuel: {rental_miles:.0f} mi airport ↔ city"
+                   + (f" × {cars} cars" if cars > 1 else "")),
+            amount_usd=rental_fuel, confidence=gas.confidence, source=gas.source,
+            detail=f"{settings.default_mpg:.0f} mpg @ ${gas.amount_usd:.2f}/gal"))
 
     total = round(sum(l.amount_usd for l in legs), 2)
     return TripOption(
         id=f"fly-{dest_airport.lower()}-{uuid.uuid4().hex[:6]}",
         mode=TravelMode.FLY,
-        summary=f"Fly {origin_airport} → {dest_airport}, then {legs[-1].label.split('(')[0].strip().lower()}",
+        summary=(f"Fly {origin_airport} → {dest_airport}, then "
+                 f"{'rental car' if legs[-1].label.startswith('Rental fuel') else 'rideshare'}"
+                 f" to {req.destination_city}"),
         legs=legs,
         total_usd=total,
         per_person_usd=_per_person(total, req.travelers),
@@ -229,11 +293,7 @@ async def _price_drive_option(
                        f"({miles:.0f} mi round trip, {route.hours:.1f}h each way)")
     else:
         drive_label = f"Drive {route.miles:.0f} mi ({route.hours:.1f}h one way)"
-    # Fuel is priced in the origin's state (most people fill up near home).
-    # Unknown state → "US": the stub serves its national default and EIA
-    # misses into the same fallback, instead of guessing a wrong state.
-    state = state_from_place(req.origin) or "US"
-    gas = await fuel.price_per_gallon(state)
+    gas = await fuel.price_per_gallon(_fuel_state(req))
     # One car per 5 travelers: each burns its own fuel and needs its own rental.
     cars = _vehicles(req.travelers, _CAR_SEATS)
     fuel_cost = round(miles / req.mpg * gas.amount_usd * cars, 2)
@@ -313,6 +373,7 @@ async def plan_trip(
     geocoder: GeocodingProvider,
 ) -> TripPlan:
     days = _trip_days(req)
+    fuel = _OncePerTrip(fuel)
     branches: list[tuple[str, asyncio.Coroutine]] = []
     plan_warnings: list[str] = []
 
@@ -351,7 +412,7 @@ async def plan_trip(
                 f"flight {origin_airport}→{ap}",
                 _price_fly_option(req, ap, miles_map.get(ap, 20.0),
                                  origin_airport, home_miles,
-                                 flights, ground, rental, days),
+                                 flights, ground, rental, fuel, days),
             ))
 
     if req.mode in (TravelMode.DRIVE, TravelMode.EITHER):

@@ -176,3 +176,29 @@ async def test_party_size_requests_one_adult_per_traveler():
     # Duffel's total_amount then covers all three — the orchestrator
     # must not multiply it again.
     assert seen["body"]["data"]["passengers"] == [{"type": "adult"}] * 3
+
+
+async def test_non_usd_offers_are_skipped():
+    eur = _offer("150.00", "06:10", "08:45")
+    eur["total_currency"] = "EUR"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": {"offers": [
+            eur, _offer("199.00", "09:00", "11:30")]}})
+
+    quotes = await DuffelFlightProvider("duffel_test_x", _mock_client(handler)).search(
+        "SEA", "LAX", date(2026, 10, 16), _prefs())
+    # The cheaper-looking EUR fare must not be read as $150.
+    assert [q.amount_usd for q in quotes] == [199.0]
+
+
+async def test_all_non_usd_offers_raise_instead_of_empty():
+    eur = _offer("150.00", "06:10", "08:45")
+    eur["total_currency"] = "EUR"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": {"offers": [eur]}})
+
+    with pytest.raises(DuffelError, match="EUR, not USD"):
+        await DuffelFlightProvider("duffel_test_x", _mock_client(handler)).search(
+            "SEA", "LAX", date(2026, 10, 16), _prefs())
