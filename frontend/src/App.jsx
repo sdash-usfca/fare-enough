@@ -266,6 +266,7 @@ export default function App() {
     depart_date: '',
     return_date: '',
     mode: 'either',
+    travelers: '1',
     own_car: true,
     fuel_price_per_gal: '',
   });
@@ -349,6 +350,10 @@ export default function App() {
       payload.fuel_price_per_gal = price;
     }
     if (form.mode === 'fly') delete payload.own_car;
+    // Blank or out-of-range → clamp into the backend's 1–9 so a stray
+    // keystroke never turns into a 422.
+    const travelers = parseInt(form.travelers, 10);
+    payload.travelers = Number.isNaN(travelers) ? 1 : Math.min(9, Math.max(1, travelers));
     const res = await fetch(`${API}/trips`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -404,6 +409,16 @@ export default function App() {
                 <input type="date" value={form.return_date} min={form.depart_date || today} onChange={set('return_date')} style={styles.input} />
               </label>
             </div>
+            <label style={styles.label}>Travelers
+              <input
+                type="number" min="1" max="9" step="1"
+                value={form.travelers} onChange={set('travelers')}
+                style={styles.input}
+              />
+              <small style={{ color: T.muted, fontWeight: 400 }}>
+                Flights are priced per seat; cars and rideshares are shared.
+              </small>
+            </label>
             {dateError && (
               <div style={{ color: '#b25a1e', fontSize: '0.9rem', fontWeight: 600 }}>
                 ⚠ {dateError}
@@ -558,7 +573,12 @@ export default function App() {
                     )}{' '}
                     {o.summary}
                   </strong>
-                  <strong style={{ fontSize: '1.25rem', color: T.ink }}>${o.total_usd.toFixed(2)}</strong>
+                  <div style={{ textAlign: 'right' }}>
+                    <strong style={{ fontSize: '1.25rem', color: T.ink }}>${o.total_usd.toFixed(2)}</strong>
+                    {plan.travelers > 1 && o.per_person_usd != null && (
+                      <div><small style={{ color: T.muted }}>${o.per_person_usd.toFixed(2)} per person</small></div>
+                    )}
+                  </div>
                 </div>
                 <ul style={{ margin: '8px 0 0', paddingLeft: 18, color: T.ink }}>
                   {o.legs.map((l, i) => {

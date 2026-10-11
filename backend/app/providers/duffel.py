@@ -114,6 +114,7 @@ class DuffelFlightProvider(FlightProvider):
         depart: date,
         prefs: FlightPrefs,
         return_date: date | None = None,
+        passengers: int = 1,
     ) -> dict:
         slices = [
             {
@@ -141,7 +142,8 @@ class DuffelFlightProvider(FlightProvider):
         return {
             "data": {
                 "slices": slices,
-                "passengers": [{"type": "adult"}],
+                # All adults: total_amount then covers the whole party.
+                "passengers": [{"type": "adult"}] * passengers,
                 "cabin_class": "economy",
                 "max_connections": 1,
             }
@@ -154,13 +156,14 @@ class DuffelFlightProvider(FlightProvider):
         depart: date,
         prefs: FlightPrefs,
         return_date: date | None = None,
+        passengers: int = 1,
     ) -> list[FlightQuote]:
         url = (
             f"{_BASE_URL}/air/offer_requests"
             f"?return_offers=true&supplier_timeout={_SUPPLIER_TIMEOUT_MS}"
         )
         body = self._request_body(
-            origin_airport, dest_airport, depart, prefs, return_date
+            origin_airport, dest_airport, depart, prefs, return_date, passengers
         )
         client = self._client or httpx.AsyncClient(timeout=25.0)
         try:

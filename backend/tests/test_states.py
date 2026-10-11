@@ -37,3 +37,9 @@ def test_return_before_depart_rejected():
 def test_same_day_and_one_way_trips_still_valid():
     assert _trip(depart_date=date(2026, 10, 16), return_date=date(2026, 10, 16))
     assert _trip(depart_date=date(2026, 10, 16))
+
+
+@pytest.mark.parametrize("travelers", [0, 10])
+def test_travelers_bounded_one_to_nine(travelers):
+    with pytest.raises(ValidationError):
+        _trip(depart_date=date(2026, 10, 16), travelers=travelers)

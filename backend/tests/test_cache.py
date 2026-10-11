@@ -112,10 +112,10 @@ class _CountingFlight(StubFlightProvider):
         self.calls = 0
 
     async def search(self, origin_airport, dest_airport, depart, prefs,
-                     return_date=None):
+                     return_date=None, passengers=1):
         self.calls += 1
         quotes = await super().search(
-            origin_airport, dest_airport, depart, prefs, return_date)
+            origin_airport, dest_airport, depart, prefs, return_date, passengers)
         for q in quotes:
             q.confidence = QuoteConfidence.LIVE
             q.source = "duffel"
@@ -139,6 +139,9 @@ async def test_cached_flight_provider_caches_live_results():
     # One-way vs round trip → separate entry.
     await cached.search("SEA", "LAX", depart, prefs)
     assert inner.calls == 3
+    # Quotes are party totals → party size is part of the key.
+    await cached.search("SEA", "LAX", depart, prefs, passengers=4)
+    assert inner.calls == 4
 
 
 async def test_cached_flight_provider_never_caches_estimates():
@@ -147,10 +150,10 @@ async def test_cached_flight_provider_never_caches_estimates():
             self.calls = 0
 
         async def search(self, origin_airport, dest_airport, depart, prefs,
-                         return_date=None):
+                         return_date=None, passengers=1):
             self.calls += 1
             return await super().search(
-                origin_airport, dest_airport, depart, prefs, return_date)
+                origin_airport, dest_airport, depart, prefs, return_date, passengers)
 
     inner = _StubSourceFlight()
     cached = CachedFlightProvider(inner, MemoryCache(), ttl_s=60)

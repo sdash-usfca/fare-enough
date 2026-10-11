@@ -81,13 +81,17 @@ class StubFlightProvider(FlightProvider):
         depart: date,
         prefs: FlightPrefs,
         return_date: date | None = None,
+        passengers: int = 1,
     ) -> list[FlightQuote]:
         seed = f"{origin_airport}{dest_airport}{depart.isoformat()}"
         h = int(hashlib.sha256(seed.encode()).hexdigest(), 16)
         base = 79 + (h % 180)  # deterministic $79–$259
         trip_note = "round trip" if return_date else "one-way"
-        # STUB simplification: round trip ≈ 2× one-way (Duffel prices it properly).
-        mult = 2 if return_date else 1
+        if passengers > 1:
+            trip_note += f", {passengers} travelers"
+        # STUB simplification: round trip ≈ 2× one-way and every seat costs
+        # the same (Duffel prices both properly).
+        mult = (2 if return_date else 1) * passengers
         quotes = [
             FlightQuote(round(base * mult, 2), QuoteConfidence.ESTIMATED, "stub-flight",
                         f"Stub Air {100 + h % 800}, nonstop (illustrative, {trip_note})"),

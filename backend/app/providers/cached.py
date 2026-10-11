@@ -96,7 +96,8 @@ class CachedFlightProvider(FlightProvider):
         self._ttl_s = ttl_s
 
     def _key(self, origin_airport: str, dest_airport: str, depart: date,
-             prefs: FlightPrefs, return_date: date | None) -> str:
+             prefs: FlightPrefs, return_date: date | None,
+             passengers: int) -> str:
         # Everything that changes the Duffel request goes in the key —
         # including red_eye_ok, which is filtered client-side *after* the
         # fetch, so two searches differing only there need different entries.
@@ -109,6 +110,7 @@ class CachedFlightProvider(FlightProvider):
             prefs.earliest_departure or "*",
             prefs.latest_departure or "*",
             "redeye" if prefs.red_eye_ok else "noredeye",
+            f"pax{passengers}",  # quotes are party totals
         ])
 
     async def search(
@@ -118,9 +120,10 @@ class CachedFlightProvider(FlightProvider):
         depart: date,
         prefs: FlightPrefs,
         return_date: date | None = None,
+        passengers: int = 1,
     ) -> list[FlightQuote]:
         key = self._key(origin_airport, dest_airport, depart, prefs,
-                        return_date)
+                        return_date, passengers)
         cached = await self._cache.get_json(key)
         if cached is not None:
             log.debug("flight cache hit: %s", key)
@@ -134,7 +137,7 @@ class CachedFlightProvider(FlightProvider):
                 for q in cached
             ]
         quotes = await self._inner.search(
-            origin_airport, dest_airport, depart, prefs, return_date)
+            origin_airport, dest_airport, depart, prefs, return_date, passengers)
         # Cache real prices only: never estimates, and never an empty offer
         # list — a transient "no flights" must not stick for the whole TTL.
         if quotes and all(q.confidence in _CACHEABLE for q in quotes):
