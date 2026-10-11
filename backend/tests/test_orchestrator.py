@@ -388,7 +388,8 @@ async def test_own_car_includes_wear_and_tear_per_mile():
     assert wear.amount_usd == round(miles * 0.1104, 2)
     assert wear.confidence == QuoteConfidence.ESTIMATED
     assert wear.source == "aaa-driving-costs"
-    assert own.total_usd == round(_leg(own, "Fuel").amount_usd + wear.amount_usd, 2)
+    # Wear is a real line in the total, not a footnote.
+    assert own.total_usd == round(sum(l.amount_usd for l in own.legs), 2)
 
 
 async def test_rental_drive_has_no_wear_leg():
@@ -454,3 +455,69 @@ async def test_fuel_looked_up_once_per_trip():
     providers["fuel"] = _CountingFuel()
     await plan_trip(_req(), **providers)  # 5 fly + 2 drive branches
     assert _CountingFuel.calls == 1
+
+
+# --- Long drives: overnight stops, feasibility, travel time -------------------
+
+def _option(plan, prefix):
+    return next(o for o in plan.options if o.summary.startswith(prefix))
+
+
+async def test_long_drive_adds_overnight_stops_both_ways():
+    # Stub Auburn → LA is ~18h each way: 2 days on the road each way at
+    # ≤10h/day → 1 night out + 1 night back.
+    plan = await plan_trip(_req(mode=TravelMode.DRIVE), **_providers())
+    for o in plan.options:  # own car and rental both sleep somewhere
+        stay = _leg(o, "Overnight stops")
+        assert stay.label == "Overnight stops: 2 nights @ $161"
+        assert stay.amount_usd == round(2 * 160.54, 2)
+        assert stay.source == "costar-adr-2025"
+        assert o.travel_note == "~18h driving each way, 1 night on the road"
+
+
+async def test_short_drive_has_no_overnight_and_one_way_counts_once():
+    short = await plan_trip(_req(destination_city="Portland", mode=TravelMode.DRIVE),
+                            **_providers())
+    assert not any(l.label.startswith("Overnight") for o in short.options for l in o.legs)
+    one_way = await plan_trip(_req(return_date=None, mode=TravelMode.DRIVE), **_providers())
+    assert _leg(one_way.options[0], "Overnight stops").label.startswith("Overnight stops: 1 night ")
+
+
+async def test_big_party_books_extra_rooms():
+    plan = await plan_trip(_req(mode=TravelMode.DRIVE, travelers=6), **_providers())
+    stay = _leg(_option(plan, "Drive a rental"), "Overnight stops")
+    assert "× 2 rooms" in stay.label
+    assert stay.amount_usd == round(2 * 2 * 160.54, 2)
+
+
+async def test_drive_longer_than_trip_warns():
+    # Fri → Sat is 2 days in total; 2 days on the road each way can't fit.
+    plan = await plan_trip(_req(return_date=date(2026, 10, 17), mode=TravelMode.DRIVE),
+                           **_providers())
+    assert any("the drive takes 2 days each way — longer than your 2-day trip"
+               in w for w in _option(plan, "Drive your own").warnings)
+    roomy = await plan_trip(_req(return_date=date(2026, 10, 26), mode=TravelMode.DRIVE),
+                            **_providers())
+    assert not _option(roomy, "Drive your own").warnings
+
+
+async def test_fly_options_show_door_to_door_time():
+    plan = await plan_trip(_req(mode=TravelMode.FLY), **_providers())
+    for o in plan.options:
+        # SEA → LA ≈ 2.7h block + ~0.4h to SEA + 1.5h early + 0.5h deplane + transfer
+        assert 4.5 < o.travel_hours < 7.5, o.travel_hours
+        assert o.travel_note.endswith("door to door each way")
+
+
+async def test_fare_duration_beats_the_estimate():
+    class _TimedFlight(StubFlightProvider):
+        async def search(self, *args, **kwargs):
+            quotes = await super().search(*args, **kwargs)
+            for q in quotes:
+                q.hours = 10.0  # e.g. a long connection
+            return quotes
+
+    providers = _providers()
+    providers["flights"] = _TimedFlight()
+    plan = await plan_trip(_req(mode=TravelMode.FLY), **providers)
+    assert all(o.travel_hours > 12 for o in plan.options)

@@ -180,3 +180,17 @@ async def test_cached_flight_provider_never_caches_empty_results():
     assert await cached.search("SEA", "LAX", depart, prefs) == []
     assert await cached.search("SEA", "LAX", depart, prefs) == []
     assert inner.calls == 2  # empty offer lists are not cached
+
+
+async def test_cached_flight_keeps_duration():
+    class _TimedLive(_CountingFlight):
+        async def search(self, *args, **kwargs):
+            quotes = await super().search(*args, **kwargs)
+            for q in quotes:
+                q.hours = 2.5
+            return quotes
+
+    cached = CachedFlightProvider(_TimedLive(), MemoryCache(), ttl_s=60)
+    await cached.search("SEA", "LAX", date(2026, 10, 16), FlightPrefs())
+    hit = await cached.search("SEA", "LAX", date(2026, 10, 16), FlightPrefs())
+    assert all(q.hours == 2.5 for q in hit)

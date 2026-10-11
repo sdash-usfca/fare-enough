@@ -290,6 +290,51 @@ types; close enough not to need a car-type field yet). Tunable per deploy.
 of owning the car, and wrote down why the obvious IRS number is the wrong
 one for this question."
 
+## 17. A fly option pays for every leg it implies
+
+**Decision:** four fixes to the fly branch, one principle: if the option
+makes you do something, the total includes it.
+- **Drive-and-park** costs the lot *and* the drive: fuel + wear for home →
+  airport and back, as its own leg.
+- **Parking** charges calendar days (Fri → Mon = 4); rentals stay on 24h
+  periods, because that's how each is sold. One-way trips never park: the
+  car would be stranded.
+- **Home → airport** is road miles, estimated as straight-line × 1.2 (the
+  commonly cited US circuity factor), for the rideshare and the drive.
+- **A destination rental** pays fuel for the airport ↔ city miles the
+  rideshare alternative would cover, before the two are compared.
+- **Duffel fares** must be USD; non-USD offers are dropped, and an all-non-USD
+  response raises so the user sees why flights are missing.
+
+Supporting change: one fuel lookup per trip (`_OncePerTrip`), shared by every
+branch. Fly branches now need fuel too, and paid sources (decision 14) and
+rate-limited ones (decision 12) shouldn't be asked seven times for one number.
+
+**Interview line:** "Every bug here was the same bug: an option implied a
+cost the total didn't carry. So I stopped fixing them one by one and wrote
+the rule down."
+
+## 18. Long drives: price the nights, show the hours
+
+**Decision:** drives past `MAX_DRIVE_HOURS_PER_DAY` (10h) add a hotel night
+per extra day on the road, each way, at `LODGING_PER_NIGHT_USD` ($160.54,
+CoStar/STR 2025 US average daily rate), one room per 4 travelers. A warning
+fires when the round-trip drive needs more days than the trip has. Every
+option carries `travel_hours` / `travel_note` (door to door, one way).
+
+**Why the split:** hotel nights are money you will spend, so they're priced.
+Time is real but its price is personal (a retiree and a contractor value a
+day differently), so it's shown next to the total and never folded into it.
+That keeps the ranking a cost ranking, and puts the trade-off in front of
+the person who has to make it.
+
+**Tradeoffs:** stops are spread evenly (real trips stop where there's a
+town); the hotel rate is a national average; fly time uses Duffel's slice
+duration when present, else distance ÷ 450 mph + 0.5h.
+
+**Interview line:** "Money goes in the total; time goes next to it. Mixing
+them would mean choosing everyone's hourly rate for them."
+
 ## File tour
 
 | Path | What it is | Why it exists |
@@ -299,8 +344,8 @@ one for this question."
 | `backend/app/models.py` | Pydantic request/response schemas | API contract, shared by backend and (later) generated clients |
 | `backend/app/api/trips.py` | `POST /trips`, `GET /trips/{id}` | Job-model endpoints (decision 5) |
 | `backend/app/db/store.py` | `JobStore`: Postgres/SQLite job persistence | Decision 7 — the jobs table is the system of record |
-| `backend/app/core/cache.py` | Redis (or in-memory) provider-result cache | Decision 7 — OSRM routes + geocodes, never jobs |
-| `backend/app/providers/cached.py` | Cache decorators for driving/geocoding | Keeps Nominatim polite and OSRM fast |
+| `backend/app/core/cache.py` | Redis (or in-memory) provider-result cache | Decision 7: routes, geocodes, fares, fuel; never jobs |
+| `backend/app/providers/cached.py` | Cache decorators for driving, geocoding, flights | Keeps Nominatim polite, OSRM fast, Duffel cheap |
 | `backend/app/core/orchestrator.py` | Builds the option tree, fans out, ranks | The product's brain — decision 2 and 6 live here |
 | `backend/app/providers/base.py` | Provider ABCs + `Quote` | Decision 3 and 4 |
 | `backend/app/providers/duffel.py` | Live flight prices (Duffel) | First real provider; active when `DUFFEL_API_KEY` is set |
@@ -308,6 +353,10 @@ one for this question."
 | `backend/app/providers/google_places.py` | Station pump prices (Google Places) | Default live fuel source; active when `GOOGLE_PLACES_API_KEY` is set (decision 14) |
 | `backend/app/providers/user.py` | Traveler-supplied fuel price | Top of the fuel chain when `fuel_price_per_gal` is set (decision 13) |
 | `backend/app/providers/*.py` | Stub/real price sources | One file per source; swap without touching the engine |
-| `backend/app/data/airports.py` | Metro → airports mapping | Nearby-airport logic needs curated data, not an API || `backend/app/worker.py` | Worker pool: claims pending jobs, prices them | The execution half of the job model — decision 5 |
-| `docker-compose.yml` | api + worker + postgres + redis | Dev matches prod (decision 7); scale workers with `--scale worker=N` |
+| `backend/app/data/airports.py` | Metro → airports mapping | Nearby-airport logic needs curated data, not an API |
+| `backend/app/data/states.py` | Place text → US state code | Fuel is priced in the origin's real state, never guessed |
+| `backend/app/worker.py` | Worker pool: claims pending jobs, prices them | The execution half of the job model — decision 5 |
+| `docker-compose.yml` | api + worker + postgres + redis, with healthchecks | Dev matches prod (decision 7); scale workers with `--scale worker=N` |
+| `scripts/smoke_test.sh` | End-to-end check against a running stack | CI's e2e job; also runs locally against `uvicorn` |
+| `.github/workflows/ci.yml` | backend (ruff + pytest), frontend (build), e2e (compose + smoke) | Every PR proves the code, the UI build and the deployed shape |
 | `frontend/` | Vite + React UI | Thin client over the API (decision 8) |

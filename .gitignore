@@ -15,6 +15,7 @@ dist-ssr/
 # Env / secrets — never commit these
 .env
 .env.*
+!.env.example
 
 # Local dev databases
 *.db
