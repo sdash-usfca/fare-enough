@@ -354,3 +354,36 @@ async def test_no_car_never_parks_at_the_airport():
                                   own_car=False), **_providers())
     assert with_car.options[0].legs[0].label.startswith("Drive + park")
     assert all(o.legs[0].label.startswith("Rideshare home") for o in no_car.options)
+
+
+# --- Own-car wear & tear ----------------------------------------------------
+
+async def test_own_car_includes_wear_and_tear_per_mile():
+    plan = await plan_trip(_req(mode=TravelMode.DRIVE), **_providers())
+    own = next(o for o in plan.options if o.summary.startswith("Drive your own"))
+    route = await StubDrivingProvider().route("Auburn, WA 98092", "Los Angeles")
+    miles = route.miles * 2  # _req is a round trip
+    wear = _leg(own, "Wear & tear")
+    assert wear.amount_usd == round(miles * 0.1104, 2)
+    assert wear.confidence == QuoteConfidence.ESTIMATED
+    assert wear.source == "aaa-driving-costs"
+    assert own.total_usd == round(_leg(own, "Fuel").amount_usd + wear.amount_usd, 2)
+
+
+async def test_rental_drive_has_no_wear_leg():
+    # The rental rate already covers the car's wear — never charge it twice.
+    plan = await plan_trip(_req(mode=TravelMode.DRIVE), **_providers())
+    rental = next(o for o in plan.options if o.summary.startswith("Drive a rental"))
+    assert not any(l.label.startswith("Wear") for l in rental.legs)
+
+
+async def test_wear_scales_per_car_and_follows_setting(monkeypatch):
+    from app.core import orchestrator as orch
+    monkeypatch.setattr(orch.settings, "own_car_wear_per_mile_usd", 0.20)
+    one = await plan_trip(_req(mode=TravelMode.DRIVE), **_providers())
+    six = await plan_trip(_req(mode=TravelMode.DRIVE, travelers=6), **_providers())
+    w1 = _leg(next(o for o in one.options if "own car" in o.summary), "Wear")
+    w6 = _leg(next(o for o in six.options if "own car" in o.summary), "Wear")
+    assert "@ $0.20/mi" in w1.label
+    assert w6.amount_usd == round(w1.amount_usd * 2, 2)
+    assert w6.label.endswith("× 2 cars")

@@ -4,7 +4,7 @@ The tree (see README/ARCHITECTURE):
   fly   = home→origin airport (rideshare vs parking, cheaper wins)
           + flight(origin → each candidate dest airport)
           + dest airport→city (rideshare vs rental car, cheaper wins)
-  drive = own car (fuel only)  vs  rental car (rate + fuel + insurance)
+  drive = own car (fuel + wear)  vs  rental car (rate + fuel + insurance)
 
 All provider calls fan out concurrently with per-branch timeouts; a failed
 branch is dropped from the ranking but reported in the plan's warnings so
@@ -16,10 +16,12 @@ import asyncio
 import logging
 import uuid
 
+from app.config import settings
 from app.data.airports import AIRPORTS, METRO_CENTERS, ORIGIN_AIRPORTS, lookup_city
 from app.data.states import state_from_place
 from app.models import (
     LegQuote,
+    QuoteConfidence,
     TravelMode,
     TripOption,
     TripPlan,
@@ -249,7 +251,17 @@ async def _price_drive_option(
                  amount_usd=fuel_cost, confidence=gas.confidence, source=gas.source,
                  detail=gas.detail),
     ]
-    if not own_car:
+    if own_car:
+        # Fuel isn't the whole cost of driving your own car: every mile wears
+        # tires, brakes and oil too. A rental's rate already covers that.
+        rate = settings.own_car_wear_per_mile_usd
+        legs.append(LegQuote(
+            label=(f"Wear & tear: {miles:.0f} mi @ ${rate:.2f}/mi"
+                   + (f" × {cars} cars" if cars > 1 else "")),
+            amount_usd=round(miles * rate * cars, 2),
+            confidence=QuoteConfidence.ESTIMATED, source="aaa-driving-costs",
+            detail="maintenance, repairs & tires per AAA Your Driving Costs 2025"))
+    else:
         rq = await rental.quote(days, pickup_airport="home")
         legs.append(LegQuote(
             label=f"Rental car ({days}d, picked up near home{_cars_note(cars)})",
@@ -343,7 +355,7 @@ async def plan_trip(
             ))
 
     if req.mode in (TravelMode.DRIVE, TravelMode.EITHER):
-        # No car → no own-car option: it's fuel-only, so it would otherwise
+        # No car → no own-car option: it has no rental fee, so it would otherwise
         # rank as the cheapest way to go for someone who can't take it.
         if req.own_car:
             branches.append((
