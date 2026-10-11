@@ -29,6 +29,10 @@ class TripRequest(BaseModel):
     return_date: date | None = None
     mode: TravelMode = TravelMode.EITHER
     flight_prefs: FlightPrefs = Field(default_factory=FlightPrefs)
+    # Party size. Flights price per seat, rideshares per 4 riders, and every
+    # car-based cost (fuel, rental, parking) per 5 — so a family of four is
+    # one car but four fares. le=9 is Duffel's per-booking passenger limit.
+    travelers: int = Field(default=1, ge=1, le=9)
     own_car: bool = True
     mpg: float = 28.0
     # Optional price override: what the traveler actually pays per gallon.
@@ -72,13 +76,16 @@ class TripOption(BaseModel):
     mode: TravelMode
     summary: str  # one-line human description, e.g. "Fly SEA→BUR + rental car"
     legs: list[LegQuote]
-    total_usd: float
+    total_usd: float  # whole party
+    # total ÷ travelers; None on plans stored before party size existed.
+    per_person_usd: float | None = None
     warnings: list[str] = []  # e.g. "rental-car pricing unavailable; leg excluded"
 
 
 class TripPlan(BaseModel):
     origin: str
     destination_city: str
+    travelers: int = 1  # default keeps plans stored before this field loadable
     options: list[TripOption]  # ranked cheapest-first
     warnings: list[str] = []  # plan-level notes, e.g. dropped provider branches
 

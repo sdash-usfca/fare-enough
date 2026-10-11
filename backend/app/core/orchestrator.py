@@ -44,6 +44,11 @@ _BRANCH_TIMEOUT_S = 20
 # leg is priced as a rideshare or parking only — there is no drive leg —
 # so without a cap a Denver origin "parked at SJC" 950 mi away for $75.
 _MAX_HOME_AIRPORT_MILES = 100.0
+# Party size → vehicles. Flights are per seat (the provider prices the whole
+# party), but ground legs are per vehicle: a standard rideshare seats 4, a
+# car (own, rental, or parked) seats 5. Six travelers = 2 rideshares or 2 cars.
+_RIDESHARE_SEATS = 4
+_CAR_SEATS = 5
 
 log = logging.getLogger(__name__)
 
@@ -56,6 +61,23 @@ def _trip_days(req: TripRequest) -> int:
 
 def _roundtrip(req: TripRequest) -> bool:
     return req.return_date is not None
+
+
+def _vehicles(travelers: int, seats: int) -> int:
+    return -(-travelers // seats)  # ceiling division
+
+
+def _cars_note(cars: int) -> str:
+    """Label suffix for multi-vehicle legs, e.g. ", 2 cars"."""
+    return f", {cars} cars" if cars > 1 else ""
+
+
+def _times_cars(detail: str, cars: int) -> str:
+    return detail + (f" — ×{cars} cars" if cars > 1 else "")
+
+
+def _per_person(total: float, travelers: int) -> float:
+    return round(total / travelers, 2)
 
 
 def _nearest_origin_airport(point: GeoPoint) -> tuple[str, float]:
@@ -127,24 +149,34 @@ async def _price_fly_option(
         ground.rideshare_estimate(home_miles),
         ground.airport_parking(origin_airport, days),
     )
+    rides = _vehicles(req.travelers, _RIDESHARE_SEATS)
+    cars = _vehicles(req.travelers, _CAR_SEATS)
     # Compare like with like: the rideshare quote is one-way, parking already
     # covers the whole stay — so double the rideshare *before* comparing.
-    ride_leg = _roundtrip_leg(f"Rideshare home → {origin_airport}", ride, roundtrip)
-    if ride_leg.amount_usd <= park.amount_usd:
+    # Both scale per vehicle, not per traveler.
+    ride_leg = _roundtrip_leg(f"Rideshare home → {origin_airport}", ride,
+                              roundtrip, vehicles=rides)
+    park_usd = round(park.amount_usd * cars, 2)
+    # No car → nothing to park: the rideshare is the only way to the airport.
+    if not req.own_car or ride_leg.amount_usd <= park_usd:
         legs.append(ride_leg)
     else:
-        legs.append(LegQuote(label=f"Drive + park at {origin_airport} ({days}d)",
-                             amount_usd=park.amount_usd, confidence=park.confidence,
-                             source=park.source, detail=park.detail))
+        legs.append(LegQuote(
+            label=f"Drive + park at {origin_airport} ({days}d{_cars_note(cars)})",
+            amount_usd=park_usd, confidence=park.confidence,
+            source=park.source, detail=_times_cars(park.detail, cars)))
 
     # Flight: cheapest offer for this airport pair. The provider prices the
     # full round trip when return_date is set — never double it here.
+    # Quotes cover the whole party too — never multiply by travelers here.
     offers = await flights.search(origin_airport, dest_airport, req.depart_date,
-                                  req.flight_prefs, req.return_date)
+                                  req.flight_prefs, req.return_date,
+                                  passengers=req.travelers)
     if not offers:
         return None
     best = offers[0]
-    legs.append(LegQuote(label=f"Flight {origin_airport} → {dest_airport}",
+    party = f" ({req.travelers} travelers)" if req.travelers > 1 else ""
+    legs.append(LegQuote(label=f"Flight {origin_airport} → {dest_airport}{party}",
                          amount_usd=best.amount_usd, confidence=best.confidence,
                          source=best.source, detail=best.detail))
 
@@ -155,13 +187,16 @@ async def _price_fly_option(
     )
     # Same rule as above: the rental is priced for the whole stay.
     ride_out_leg = _roundtrip_leg(
-        f"Rideshare {dest_airport} → {req.destination_city}", ride_out, roundtrip)
-    if ride_out_leg.amount_usd <= rental_q.amount_usd:
+        f"Rideshare {dest_airport} → {req.destination_city}", ride_out,
+        roundtrip, vehicles=rides)
+    rental_usd = round(rental_q.amount_usd * cars, 2)
+    if ride_out_leg.amount_usd <= rental_usd:
         legs.append(ride_out_leg)
     else:
-        legs.append(LegQuote(label=f"Rental car at {dest_airport} ({days}d)",
-                             amount_usd=rental_q.amount_usd, confidence=rental_q.confidence,
-                             source=rental_q.source, detail=rental_q.detail))
+        legs.append(LegQuote(
+            label=f"Rental car at {dest_airport} ({days}d{_cars_note(cars)})",
+            amount_usd=rental_usd, confidence=rental_q.confidence,
+            source=rental_q.source, detail=_times_cars(rental_q.detail, cars)))
 
     total = round(sum(l.amount_usd for l in legs), 2)
     return TripOption(
@@ -170,6 +205,7 @@ async def _price_fly_option(
         summary=f"Fly {origin_airport} → {dest_airport}, then {legs[-1].label.split('(')[0].strip().lower()}",
         legs=legs,
         total_usd=total,
+        per_person_usd=_per_person(total, req.travelers),
         warnings=warnings,
     )
 
@@ -196,21 +232,29 @@ async def _price_drive_option(
     # misses into the same fallback, instead of guessing a wrong state.
     state = state_from_place(req.origin) or "US"
     gas = await fuel.price_per_gallon(state)
-    fuel_cost = round(miles / req.mpg * gas.amount_usd, 2)
+    # One car per 5 travelers: each burns its own fuel and needs its own rental.
+    cars = _vehicles(req.travelers, _CAR_SEATS)
+    fuel_cost = round(miles / req.mpg * gas.amount_usd * cars, 2)
+    warnings: list[str] = []
+    if own_car and cars > 1:
+        warnings.append(f"assumes {cars} cars of your own for {req.travelers} "
+                        f"travelers ({_CAR_SEATS} seats each)")
 
     legs = [
         LegQuote(label=drive_label,
                  amount_usd=0, confidence=route.confidence, source=route.source,
                  detail="distance/time only — no cost"),
-        LegQuote(label=f"Fuel: {miles:.0f} mi / {req.mpg} mpg @ ${gas.amount_usd:.2f}/gal",
+        LegQuote(label=(f"Fuel: {miles:.0f} mi / {req.mpg} mpg @ "
+                        f"${gas.amount_usd:.2f}/gal" + (f" × {cars} cars" if cars > 1 else "")),
                  amount_usd=fuel_cost, confidence=gas.confidence, source=gas.source,
                  detail=gas.detail),
     ]
     if not own_car:
         rq = await rental.quote(days, pickup_airport="home")
-        legs.append(LegQuote(label=f"Rental car ({days}d, picked up near home)",
-                             amount_usd=rq.amount_usd, confidence=rq.confidence,
-                             source=rq.source, detail=rq.detail))
+        legs.append(LegQuote(
+            label=f"Rental car ({days}d, picked up near home{_cars_note(cars)})",
+            amount_usd=round(rq.amount_usd * cars, 2), confidence=rq.confidence,
+            source=rq.source, detail=_times_cars(rq.detail, cars)))
     total = round(sum(l.amount_usd for l in legs), 2)
     return TripOption(
         id=f"drive-{'own' if own_car else 'rental'}-{uuid.uuid4().hex[:6]}",
@@ -218,6 +262,8 @@ async def _price_drive_option(
         summary=f"Drive {'your own car' if own_car else 'a rental car'} ({miles:.0f} mi)",
         legs=legs,
         total_usd=total,
+        per_person_usd=_per_person(total, req.travelers),
+        warnings=warnings,
     )
 
 
@@ -229,13 +275,17 @@ def _error_summary(exc: BaseException) -> str:
     return msg[:120] if msg else type(exc).__name__
 
 
-def _roundtrip_leg(label: str, quote, roundtrip: bool) -> LegQuote:
-    """Build a leg from a one-way MoneyQuote, doubling it for round trips.
+def _roundtrip_leg(label: str, quote, roundtrip: bool, vehicles: int = 1) -> LegQuote:
+    """Build a leg from a one-way, one-vehicle MoneyQuote, doubling it for
+    round trips and multiplying by vehicles for big parties.
 
     Only per-direction legs (rideshares) go through here — duration-priced
     legs like parking and rentals are already round-trip-aware."""
-    amount = quote.amount_usd * (2 if roundtrip else 1)
+    amount = quote.amount_usd * (2 if roundtrip else 1) * vehicles
     detail = quote.detail + (" — ×2 covers the return trip" if roundtrip else "")
+    if vehicles > 1:
+        label += f" ({vehicles} cars)"
+        detail += f" — ×{vehicles} cars"
     return LegQuote(label=label, amount_usd=round(amount, 2),
                     confidence=quote.confidence, source=quote.source,
                     detail=detail)
@@ -326,6 +376,7 @@ async def plan_trip(
     return TripPlan(
         origin=req.origin,
         destination_city=req.destination_city,
+        travelers=req.travelers,
         options=options,
         warnings=warnings,
     )

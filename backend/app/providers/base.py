@@ -47,11 +47,13 @@ class FlightProvider(ABC):
         depart: date,
         prefs: FlightPrefs,
         return_date: date | None = None,
+        passengers: int = 1,
     ) -> list[FlightQuote]:
         """Cheapest bookable options for one airport pair, cheapest-first.
 
         If return_date is given, quotes cover the whole round trip (the
-        provider prices both directions); otherwise they are one-way."""
+        provider prices both directions); otherwise they are one-way.
+        Quotes cover all `passengers` — the caller never multiplies."""
 
 
 class DrivingProvider(ABC):

@@ -162,3 +162,17 @@ async def test_oneway_still_sends_single_slice():
                                _mock_client(handler)).search(
         "SEA", "LAX", date(2026, 10, 16), _prefs())
     assert len(seen["body"]["data"]["slices"]) == 1
+
+
+async def test_party_size_requests_one_adult_per_traveler():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content.decode())
+        return httpx.Response(200, json={"data": {"offers": []}})
+
+    await DuffelFlightProvider("duffel_test_x", _mock_client(handler)).search(
+        "SEA", "LAX", date(2026, 10, 16), _prefs(), passengers=3)
+    # Duffel's total_amount then covers all three — the orchestrator
+    # must not multiply it again.
+    assert seen["body"]["data"]["passengers"] == [{"type": "adult"}] * 3

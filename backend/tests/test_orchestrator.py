@@ -113,8 +113,8 @@ class _FixedFlightProvider(StubFlightProvider):
     can be checked exactly."""
 
     async def search(self, origin_airport, dest_airport, depart, prefs,
-                     return_date=None):
-        amount = 200.0 if return_date else 100.0
+                     return_date=None, passengers=1):
+        amount = (200.0 if return_date else 100.0) * passengers
         return [FlightQuote(amount, QuoteConfidence.ESTIMATED, "fixed",
                             "Fixed Air 1, nonstop")]
 
@@ -289,3 +289,68 @@ async def test_no_own_car_drops_own_car_option():
 async def test_own_car_offers_both_drive_options():
     plan = await plan_trip(_req(mode=TravelMode.DRIVE), **_providers())
     assert len(plan.options) == 2
+
+
+# --- Party size -------------------------------------------------------------
+
+def _leg(option, prefix):
+    return next(l for l in option.legs if l.label.startswith(prefix))
+
+
+async def test_flight_priced_for_whole_party_once():
+    providers = _providers()
+    providers["flights"] = _FixedFlightProvider()
+    plan = await plan_trip(_req(travelers=3, mode=TravelMode.FLY), **providers)
+    for option in plan.options:
+        flight = _leg(option, "Flight ")
+        assert flight.amount_usd == 600.0  # 200 round trip × 3, not × 9
+        assert "(3 travelers)" in flight.label
+
+
+async def test_party_of_four_is_one_car_four_fares():
+    one = await plan_trip(_req(mode=TravelMode.DRIVE), **_providers())
+    four = await plan_trip(_req(mode=TravelMode.DRIVE, travelers=4), **_providers())
+    # Same car, same fuel: driving costs the same total for 1 or 4 people...
+    assert [o.total_usd for o in four.options] == [o.total_usd for o in one.options]
+    # ...so per person it's a quarter.
+    for o in four.options:
+        assert o.per_person_usd == round(o.total_usd / 4, 2)
+    assert four.travelers == 4
+
+
+async def test_six_travelers_need_two_cars_and_two_rideshares():
+    one = await plan_trip(_req(), **_providers())
+    six = await plan_trip(_req(travelers=6), **_providers())
+
+    rental1 = next(o for o in one.options if o.summary.startswith("Drive a rental"))
+    rental6 = next(o for o in six.options if o.summary.startswith("Drive a rental"))
+    assert _leg(rental6, "Fuel").amount_usd == round(_leg(rental1, "Fuel").amount_usd * 2, 2)
+    assert _leg(rental6, "Rental car").amount_usd == _leg(rental1, "Rental car").amount_usd * 2
+    assert ", 2 cars)" in _leg(rental6, "Rental car").label
+
+    own6 = next(o for o in six.options if o.summary.startswith("Drive your own"))
+    assert any("assumes 2 cars of your own for 6 travelers" in w for w in own6.warnings)
+
+    lax1 = next(o for o in one.options if "→ LAX" in o.summary)
+    lax6 = next(o for o in six.options if "→ LAX" in o.summary)
+    home1, home6 = lax1.legs[0], lax6.legs[0]
+    assert home6.label.startswith("Rideshare home") and home6.label.endswith("(2 cars)")
+    assert home6.amount_usd == round(home1.amount_usd * 2, 2)
+
+
+async def test_solo_traveler_labels_unchanged():
+    plan = await plan_trip(_req(), **_providers())
+    for o in plan.options:
+        assert o.per_person_usd == o.total_usd
+        assert not any("cars" in l.label or "travelers" in l.label for l in o.legs)
+
+
+async def test_no_car_never_parks_at_the_airport():
+    # 1-day trip: parking ($30) beats the round-trip rideshare (~$46) — but
+    # only for someone with a car to park.
+    with_car = await plan_trip(_req(return_date=date(2026, 10, 17), mode=TravelMode.FLY),
+                               **_providers())
+    no_car = await plan_trip(_req(return_date=date(2026, 10, 17), mode=TravelMode.FLY,
+                                  own_car=False), **_providers())
+    assert with_car.options[0].legs[0].label.startswith("Drive + park")
+    assert all(o.legs[0].label.startswith("Rideshare home") for o in no_car.options)

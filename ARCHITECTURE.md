@@ -240,6 +240,31 @@ near me charges today" than any state average.
 the street, so I priced from real stations — and spent as much design on
 not burning the free tier as on the integration itself."
 
+## 15. Price the party, not the passenger
+
+**Decision:** `TripRequest.travelers` (1–9) scales each leg by what it is
+actually sold per: flights per **seat** (the provider prices the whole
+party), rideshares per **vehicle of 4**, and fuel, rentals and parking per
+**car of 5**. Options carry `per_person_usd`.
+
+**Why:** the old model compared one airfare against a whole car's fuel. A
+family of four flying pays four fares; driving, they share one tank. The
+ranking was biased toward flying for every group, and groups are exactly
+who drives.
+
+**Tradeoffs (documented, not hidden):**
+- Every traveler is an adult fare. Child and infant fares are cheaper, so
+  flights are slightly overstated for families: the conservative direction.
+- Seat counts are fixed (4 per rideshare, 5 per car). No XL rideshares or
+  minivans; 6+ travelers become two vehicles, and own-car drives say so in a
+  warning rather than assuming you own a van.
+- Duffel's per-booking limit (9) caps the party; bigger groups book in
+  splits, which this app doesn't model.
+
+**Interview line:** "The bug wasn't arithmetic, it was units: seats and
+vehicles were being added together. Once every leg is priced in the unit
+it's sold in, the ranking fixes itself."
+
 ## File tour
 
 | Path | What it is | Why it exists |
